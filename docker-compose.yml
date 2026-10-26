@@ -1,0 +1,27 @@
+services:
+  mediamtx-dashboard:
+    build: .
+    container_name: mediamtx_dashboard
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+    depends_on:
+      - mediamtx
+    restart: unless-stopped
+
+  mediamtx:
+      image: bluenviron/mediamtx:latest
+      container_name: mediamtx
+      ports:
+        - "8554:8554"   # RTSP
+        - "1935:1935"   # RTMP
+        - "8888:8888"   # HLS
+        - "8889:8889"   # WebRTC / WHEP
+        - "9997:9997"   # API
+      volumes:
+        - ./mediamtx.yml:/mediamtx.yml
+      restart: unless-stopped
