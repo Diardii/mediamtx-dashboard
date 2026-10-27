@@ -7,20 +7,6 @@ from fastapi.responses import FileResponse
 from config import settings
 from deps import get_mediamtx_client
 from mediamtx_client import MediaMTXClient
-from schemas import (
-    ServerHealthResponse,
-    ServerConfigResponse,
-    ServerConfigPatch,
-    PathDetailResponse,
-    PathListResponse,
-    PathCreateRequest,
-    PathPatchRequest,
-    StreamListResponse,
-    StreamSummaryResponse,
-    StreamDetailResponse,
-    SessionListResponse,
-    SessionKickResponse,
-)
 from responses import StandardResponse
 
 
@@ -45,21 +31,21 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- SERVER ROUTES ---
 
-@app.get("/api/server/health", response_model=StandardResponse[ServerHealthResponse])
+@app.get("/api/server/health")
 async def server_health(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_server_health()
     return StandardResponse.success(data, "MediaMTX health status")
 
 
-@app.get("/api/server/config", response_model=StandardResponse[ServerConfigResponse])
+@app.get("/api/server/config")
 async def server_config(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_server_config()
     return StandardResponse.success(data, "MediaMTX configuration")
 
 
-@app.patch("/api/server/config", response_model=StandardResponse[ServerConfigResponse])
+@app.patch("/api/server/config")
 async def patch_server_config(
-    payload: ServerConfigPatch, client: MediaMTXClient = Depends(get_mediamtx_client)
+    payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
     data = await client.patch_server_config(payload)
     return StandardResponse.success(data, "Configuration updated")
@@ -67,35 +53,35 @@ async def patch_server_config(
 
 # --- PATHS ROUTES ---
 
-@app.get("/api/paths", response_model=StandardResponse[PathListResponse])
+@app.get("/api/paths")
 async def list_paths(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.list_paths()
-    return StandardResponse.success(data, f"{len(data.items)} paths")
+    return StandardResponse.success(data, "Paths listed")
 
 
-@app.post("/api/paths", response_model=StandardResponse[PathDetailResponse])
+@app.post("/api/paths")
 async def create_path(
-    payload: PathCreateRequest, client: MediaMTXClient = Depends(get_mediamtx_client)
+    payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
-    data = await client.create_path(payload.name, payload.source, payload.source_on_demand)
+    data = await client.create_path(payload.get("name"), payload.get("source"), payload.get("source_on_demand", True))
     return StandardResponse.success(data, "Path created")
 
 
-@app.get("/api/paths/{name}", response_model=StandardResponse[PathDetailResponse])
+@app.get("/api/paths/{name}")
 async def get_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_path(name)
     return StandardResponse.success(data, "Path details")
 
 
-@app.patch("/api/paths/{name}", response_model=StandardResponse[PathDetailResponse])
+@app.patch("/api/paths/{name}")
 async def update_path(
-    name: str, payload: PathPatchRequest, client: MediaMTXClient = Depends(get_mediamtx_client)
+    name: str, payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
     data = await client.update_path(name, payload)
     return StandardResponse.success(data, "Path updated")
 
 
-@app.delete("/api/paths/{name}", response_model=StandardResponse[None])
+@app.delete("/api/paths/{name}")
 async def delete_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     await client.delete_path(name)
     return StandardResponse.success(None, "Path deleted")
@@ -103,19 +89,19 @@ async def delete_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_c
 
 # --- STREAMS ROUTES ---
 
-@app.get("/api/streams", response_model=StandardResponse[StreamListResponse])
+@app.get("/api/streams")
 async def list_streams(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.list_streams()
-    return StandardResponse.success(data, f"{len(data.items)} streams")
+    return StandardResponse.success(data, "Streams listed")
 
 
-@app.get("/api/streams/summary", response_model=StandardResponse[StreamSummaryResponse])
+@app.get("/api/streams/summary")
 async def streams_summary(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_streams_summary()
     return StandardResponse.success(data, "Streams summary")
 
 
-@app.get("/api/streams/{name}", response_model=StandardResponse[StreamDetailResponse])
+@app.get("/api/streams/{name}")
 async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_stream_detail(name)
     return StandardResponse.success(data, "Stream details")
@@ -123,14 +109,14 @@ async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx
 
 # --- SESSIONS ROUTES ---
 
-@app.get("/api/sessions", response_model=StandardResponse[SessionListResponse])
+@app.get("/api/sessions")
 async def list_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.list_sessions()
-    return StandardResponse.success(data, f"{len(data.items)} sessions")
+    return StandardResponse.success(data, "Sessions listed")
 
 
 @app.post(
-    "/api/sessions/{type}/{id}/kick", response_model=StandardResponse[SessionKickResponse]
+    "/api/sessions/{type}/{id}/kick"
 )
 async def kick_session(
     type: str, id: str, client: MediaMTXClient = Depends(get_mediamtx_client)

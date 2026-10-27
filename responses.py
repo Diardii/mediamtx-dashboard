@@ -1,18 +1,16 @@
-from typing import Generic, TypeVar
-from pydantic import BaseModel
+class StandardResponse:
+    @staticmethod
+    def success(data=None, message=""):
+        return {
+            "success": True,
+            "data": data,
+            "message": message,
+        }
 
-T = TypeVar("T")
-
-
-class StandardResponse(BaseModel, Generic[T]):
-    success: bool
-    data: T | None
-    message: str
-
-    @classmethod
-    def success(cls, data: T, message: str = "") -> "StandardResponse[T]":
-        return cls(success=True, data=data, message=message)
-
-    @classmethod
-    def error(cls, message: str, data: T | None = None) -> "StandardResponse[T]":
-        return cls(success=False, data=data, message=message)
+    @staticmethod
+    def error(message, data=None):
+        return {
+            "success": False,
+            "data": data,
+            "message": message,
+        }

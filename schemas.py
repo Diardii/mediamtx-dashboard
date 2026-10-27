@@ -4,10 +4,7 @@ from pydantic import BaseModel, field_validator
 
 # --- Common ---
 
-class StandardResponse(BaseModel):
-    success: bool
-    data: Optional[object] = None
-    message: str = ""
+# (Moved to responses.py)
 
 
 # --- Server ---
@@ -18,10 +15,9 @@ class ServerHealthResponse(BaseModel):
 
 
 class ServerConfigResponse(BaseModel):
-    # MediaMTX global config fields (subset)
+    model_config = {"extra": "allow"}
     api: Optional[bool] = None
     log_level: Optional[str] = None
-    # Add more as needed
 
 
 class ServerConfigPatch(BaseModel):
