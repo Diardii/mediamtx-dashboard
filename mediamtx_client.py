@@ -79,14 +79,25 @@ class MediaMTXClient:
         r.raise_for_status()
         data = r.json()
         items = data.get("items", []) or []
+        
+        def safe_int(val):
+            if isinstance(val, int):
+                return val
+            if isinstance(val, (list, dict)):
+                return 0
+            try:
+                return int(val)
+            except Exception:
+                return 0
+
         online = sum(1 for s in items if s.get("ready"))
         return {
             "total": len(items),
             "online": online,
             "offline": len(items) - online,
-            "total_readers": sum(s.get("readers", 0) for s in items),
-            "total_bytes_received": sum(s.get("bytes_received", 0) for s in items),
-            "total_bytes_sent": sum(s.get("bytes_sent", 0) for s in items),
+            "total_readers": sum(safe_int(s.get("readers", 0)) for s in items),
+            "total_bytes_received": sum(safe_int(s.get("bytes_received", 0)) for s in items),
+            "total_bytes_sent": sum(safe_int(s.get("bytes_sent", 0)) for s in items),
         }
 
     async def get_stream_detail(self, name):
