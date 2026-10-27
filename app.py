@@ -1,13 +1,54 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+import os
 
 from config import settings
 from deps import get_mediamtx_client
 from mediamtx_client import MediaMTXClient
 from responses import StandardResponse
+
+
+def read_log_file(path: str, lines: int = 100):
+    """Read the last N lines from a log file."""
+    try:
+        if not os.path.exists(path):
+            return {"lines": [], "error": f"Log file not found: {path}"}
+        
+        with open(path, 'r') as f:
+            all_lines = f.readlines()
+        
+        # Get the last N lines
+        last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        
+        # Parse log lines (assuming JSON format or standard log format)
+        parsed_lines = []
+        for line in last_lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                # Try to parse as JSON (MediaMTX structured logs)
+                import json
+                log_entry = json.loads(line)
+                parsed_lines.append({
+                    "timestamp": log_entry.get("time", ""),
+                    "level": log_entry.get("level", ""),
+                    "message": log_entry.get("msg", "")
+                })
+            except json.JSONDecodeError:
+                # Fallback: treat as plain text
+                parsed_lines.append({
+                    "timestamp": "",
+                    "level": "",
+                    "message": line
+                })
+        
+        return {"lines": parsed_lines, "error": None}
+    except Exception as e:
+        return {"lines": [], "error": str(e)}
 
 
 @asynccontextmanager
@@ -123,6 +164,76 @@ async def kick_session(
 ):
     data = await client.kick_session(type, id)
     return StandardResponse.success(data, "Session kicked")
+
+
+# --- PATH DEFAULTS ROUTES ---
+
+@app.get("/api/config/path-defaults")
+async def get_path_defaults(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.get_path_defaults()
+    return StandardResponse.success(data, "Path defaults retrieved")
+
+
+@app.patch("/api/config/path-defaults")
+async def patch_path_defaults(
+    payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
+):
+    data = await client.patch_path_defaults(payload)
+    return StandardResponse.success(data, "Path defaults updated")
+
+
+# --- RUNTIME ROUTES ---
+
+@app.get("/api/runtime/hls/connections")
+async def hls_connections(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_hls_connections()
+    return StandardResponse.success(data, "HLS connections listed")
+
+
+@app.get("/api/runtime/rtsp/connections")
+async def rtsp_connections(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_rtsp_connections()
+    return StandardResponse.success(data, "RTSP connections listed")
+
+
+@app.get("/api/runtime/rtmp/connections")
+async def rtmp_connections(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_rtmp_connections()
+    return StandardResponse.success(data, "RTMP connections listed")
+
+
+@app.get("/api/runtime/hls/sessions")
+async def hls_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_hls_sessions()
+    return StandardResponse.success(data, "HLS sessions listed")
+
+
+@app.get("/api/runtime/rtsp/sessions")
+async def rtsp_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_rtsp_sessions()
+    return StandardResponse.success(data, "RTSP sessions listed")
+
+
+@app.get("/api/runtime/rtmp/sessions")
+async def rtmp_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.list_rtmp_sessions()
+    return StandardResponse.success(data, "RTMP sessions listed")
+
+
+@app.get("/api/metrics")
+async def get_metrics(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    data = await client.get_metrics()
+    return StandardResponse.success({"metrics": data}, "Metrics retrieved")
+
+
+# --- LOGS ROUTES ---
+
+@app.get("/api/logs")
+async def read_logs(
+    lines: int = Query(100, ge=1, le=5000)
+):
+    data = read_log_file(settings.LOG_FILE_PATH, lines)
+    return StandardResponse.success(data, "Logs retrieved")
 
 
 # --- FRONTEND ---

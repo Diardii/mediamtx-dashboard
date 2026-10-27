@@ -139,6 +139,15 @@
     background-color: #fecaca; /* red-200 */
 }
 
+.btn-primary {
+    background-color: #dbeafe; /* blue-100 */
+    color: #2563eb; /* blue-600 */
+}
+
+.btn-primary:hover {
+    background-color: #bfdbfe; /* blue-200 */
+}
+
 /* Connection Status */
 #connection-status {
     font-weight: 500;
