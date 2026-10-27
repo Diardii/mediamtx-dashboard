@@ -7,8 +7,10 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - mediamtx_logs:/var/log/mediamtx
     environment:
       - MEDIAMTX_API_URL=http://mediamtx:9997
+      - LOG_FILE_PATH=/var/log/mediamtx/mediamtx.log
     depends_on:
       - mediamtx
     restart: unless-stopped
@@ -24,4 +26,8 @@ services:
         - "9997:9997"   # API
       volumes:
         - ./mediamtx.yml:/mediamtx.yml
+        - mediamtx_logs:/var/log/mediamtx
       restart: unless-stopped
+
+volumes:
+  mediamtx_logs:

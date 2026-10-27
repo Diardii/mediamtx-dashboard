@@ -19,6 +19,20 @@ function formatNumber(num) {
     return num.toLocaleString();
 }
 
+function formatUptime(seconds) {
+    if (!seconds) return '-';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const parts = [];
+    if (d) parts.push(`${d}d`);
+    if (h) parts.push(`${h}h`);
+    if (m) parts.push(`${m}m`);
+    parts.push(`${s}s`);
+    return parts.join(' ');
+}
+
 async function fetchAPI(endpoint, options = {}) {
     const res = await fetch(`${API_BASE}${endpoint}`, {
         headers: { 'Content-Type': 'application/json' },
@@ -170,13 +184,23 @@ async function loadPageData(page) {
         case 'config-global':
             await loadConfigGlobal();
             break;
-        // Placeholder pages - no data loading needed
-        case 'config-paths':
         case 'config-defaults':
+            await loadConfigDefaults();
+            break;
         case 'runtime-hls':
+            await loadRuntimeHLS();
+            break;
         case 'runtime-rtsp':
+            await loadRuntimeRTSP();
+            break;
         case 'runtime-rtmp':
+            await loadRuntimeRTMP();
+            break;
         case 'runtime-logs':
+            await loadRuntimeLogs();
+            break;
+        case 'config-paths':
+            // Placeholder - backend integration not yet available
             break;
     }
 }
@@ -196,7 +220,8 @@ async function loadDashboard() {
         if (summary.success) renderSummary(summary.data);
         if (streams.success) renderStreams(streams.data.items);
         if (sessions.success) renderSessions(sessions.data.items);
-        if (health.success && config.success) renderServer(health.data, config.data);
+        if (health.success) renderServerStatus(health.data);
+        if (config.success) renderServerConfig(config.data);
 
         setConnectionStatus(true);
     } catch (e) {
@@ -210,6 +235,12 @@ function renderSummary(data) {
     document.getElementById('stat-online').textContent = formatNumber(data.online);
     document.getElementById('stat-offline').textContent = formatNumber(data.offline);
     document.getElementById('stat-viewers').textContent = formatNumber(data.total_readers);
+    
+    // Update server traffic in the status card
+    document.getElementById('server-traffic').textContent = 
+        `${formatBytes(data.total_bytes_received)} / ${formatBytes(data.total_bytes_sent)}`;
+    document.getElementById('server-total-readers').textContent = formatNumber(data.total_readers);
+    document.getElementById('server-active-paths').textContent = formatNumber(data.online);
 }
 
 function renderStreams(streams) {
@@ -242,23 +273,63 @@ function renderStreams(streams) {
 }
 
 function renderSessions(sessions) {
-    // Sessions are shown on dashboard now, could add a separate section if needed
-    console.log('Sessions:', sessions);
+    const tbody = document.getElementById('sessions-table-body');
+    const countEl = document.getElementById('sessions-count');
+    
+    countEl.textContent = `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
+    
+    if (sessions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-gray-500">No active sessions</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = sessions.map(s => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.id)}</td>
+            <td class="px-6 py-4 text-sm">
+                <span class="status-badge status-online">${escapeHtml(s.type.toUpperCase())}</span>
+            </td>
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.path)}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(s.remote_addr)}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
+            <td class="px-6 py-4">
+                <button onclick="kickSession('${escapeHtml(s.type)}', '${escapeHtml(s.id)}')" class="btn-icon btn-danger">Kick</button>
+            </td>
+        </tr>
+    `).join('');
 }
 
-function renderServer(health, config) {
-    // Server info could be shown in a collapsible section
-    console.log('Server health:', health);
-    console.log('Server config:', config);
+function renderServerStatus(health) {
+    const connected = health.connected === true;
+    const statusEl = document.getElementById('server-connection-status');
+    statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+    statusEl.className = `px-3 py-1 text-sm rounded-lg ${connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+    
+    document.getElementById('server-version').textContent = health.version || 'unknown';
+    document.getElementById('server-uptime').textContent = formatUptime(health.uptime);
+}
+
+function renderServerConfig(config) {
+    // Extract path count from config if available
+    const paths = config.paths || {};
+    const pathCount = Object.keys(paths).length;
+    
+    // We'll get active paths and readers from the streams summary instead
+    // This is just for static config info
+    document.getElementById('server-total-paths').textContent = pathCount;
 }
 
 // --- Paths ---
+
+let allPaths = [];
 
 async function loadPaths() {
     try {
         const paths = await fetchAPI('/paths');
         if (paths.success) {
-            renderPaths(paths.data.items);
+            allPaths = paths.data.items;
+            renderPaths(allPaths);
         }
         setConnectionStatus(true);
     } catch (e) {
@@ -269,13 +340,19 @@ async function loadPaths() {
 
 function renderPaths(paths) {
     const tbody = document.getElementById('paths-table-body');
+    const searchTerm = document.getElementById('paths-search')?.value.toLowerCase() || '';
     
-    if (paths.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-500">No paths configured</td></tr>';
+    const filtered = paths.filter(p => 
+        p.name.toLowerCase().includes(searchTerm) || 
+        (p.source && p.source.toLowerCase().includes(searchTerm))
+    );
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
         return;
     }
 
-    tbody.innerHTML = paths.map(p => `
+    tbody.innerHTML = filtered.map(p => `
         <tr class="hover:bg-gray-50">
             <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
             <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.source || '(publisher)')}</td>
@@ -285,11 +362,47 @@ function renderPaths(paths) {
                 </span>
             </td>
             <td class="px-6 py-4">
+                <button onclick="editPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
                 <button onclick="deletePath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
             </td>
         </tr>
     `).join('');
 }
+
+// --- Path Modal (Add/Edit) ---
+
+let editingPathName = null;
+
+function openPathModal(path = null) {
+    const modal = document.getElementById('add-path-modal');
+    const form = document.getElementById('add-path-form');
+    const title = document.querySelector('#add-path-modal h3');
+    
+    form.reset();
+    editingPathName = null;
+    
+    if (path) {
+        title.textContent = 'Edit Path';
+        editingPathName = path.name;
+        document.querySelector('input[name="name"]').value = path.name;
+        document.querySelector('input[name="name"]').disabled = true;
+        document.querySelector('input[name="source"]').value = path.source || '';
+        document.querySelector('input[name="source_on_demand"]').checked = path.source_on_demand !== false;
+    } else {
+        title.textContent = 'Add New Path';
+        document.querySelector('input[name="name"]').disabled = false;
+    }
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+window.editPath = function(name) {
+    const path = allPaths.find(p => p.name === name);
+    if (path) {
+        openPathModal(path);
+    }
+};
 
 // --- Config Global ---
 
@@ -378,11 +491,7 @@ window.kickSession = async function(type, id) {
 const modal = document.getElementById('add-path-modal');
 const form = document.getElementById('add-path-form');
 
-document.getElementById('add-path-btn').addEventListener('click', () => {
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    form.reset();
-});
+document.getElementById('add-path-btn').addEventListener('click', () => openPathModal(null));
 
 document.getElementById('cancel-path-btn').addEventListener('click', () => {
     modal.classList.add('hidden');
@@ -392,27 +501,265 @@ document.getElementById('cancel-path-btn').addEventListener('click', () => {
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
+    const name = fd.get('name');
+    const source = fd.get('source') || null;
+    const source_on_demand = fd.get('source_on_demand') === 'on';
+    
     try {
-        await fetchAPI('/paths', {
-            method: 'POST',
-            body: JSON.stringify({
-                name: fd.get('name'),
-                source: fd.get('source') || null,
-                source_on_demand: fd.get('source_on_demand') === 'on',
-            }),
-        });
+        if (editingPathName) {
+            // Edit existing path
+            await fetchAPI(`/paths/${encodeURIComponent(editingPathName)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ source, source_on_demand }),
+            });
+        } else {
+            // Add new path
+            await fetchAPI('/paths', {
+                method: 'POST',
+                body: JSON.stringify({ name, source, source_on_demand }),
+            });
+        }
         modal.classList.add('hidden');
         modal.classList.remove('flex');
         loadPaths();
     } catch (e) {
         showError(e.message);
-        alert(`Failed to add path: ${e.message}`);
+        alert(`Failed to ${editingPathName ? 'update' : 'add'} path: ${e.message}`);
     }
+});
+
+// Paths search
+document.getElementById('paths-search')?.addEventListener('input', () => {
+    renderPaths(allPaths);
 });
 
 // Config Global buttons
 document.getElementById('config-global-save').addEventListener('click', saveConfigGlobal);
 document.getElementById('config-global-reset').addEventListener('click', resetConfigGlobal);
+
+// --- Config Path Defaults ---
+
+let originalDefaults = null;
+
+async function loadConfigDefaults() {
+    try {
+        const res = await fetchAPI('/config/path-defaults');
+        if (res.success) {
+            originalDefaults = res.data;
+            document.getElementById('config-defaults-editor').value = JSON.stringify(res.data, null, 2);
+            document.getElementById('config-defaults-status').classList.add('hidden');
+        }
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+        document.getElementById('config-defaults-editor').value = 'Failed to load configuration';
+    }
+}
+
+function saveConfigDefaults() {
+    const editor = document.getElementById('config-defaults-editor');
+    const statusEl = document.getElementById('config-defaults-status');
+    
+    try {
+        const config = JSON.parse(editor.value);
+        
+        fetchAPI('/config/path-defaults', {
+            method: 'PATCH',
+            body: JSON.stringify(config),
+        }).then(res => {
+            if (res.success) {
+                originalDefaults = config;
+                statusEl.textContent = 'Configuration saved successfully';
+                statusEl.className = 'mt-4 text-sm text-green-600';
+                statusEl.classList.remove('hidden');
+            } else {
+                throw new Error('Failed to save');
+            }
+        }).catch(err => {
+            statusEl.textContent = `Error: ${err.message}`;
+            statusEl.className = 'mt-4 text-sm text-red-600';
+            statusEl.classList.remove('hidden');
+        });
+    } catch (e) {
+        statusEl.textContent = 'Invalid JSON format';
+        statusEl.className = 'mt-4 text-sm text-red-600';
+        statusEl.classList.remove('hidden');
+    }
+}
+
+function resetConfigDefaults() {
+    if (originalDefaults) {
+        document.getElementById('config-defaults-editor').value = JSON.stringify(originalDefaults, null, 2);
+        document.getElementById('config-defaults-status').classList.add('hidden');
+    }
+}
+
+// --- Runtime Pages ---
+
+function renderConnections(tbodyId, connections) {
+    const tbody = document.getElementById(tbodyId);
+    
+    if (!connections || connections.length === 0) {
+        const cols = tbody.closest('table').querySelector('thead tr').children.length;
+        tbody.innerHTML = `<tr><td colspan="${cols}" class="px-6 py-12 text-center text-gray-500">No connections</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = connections.map(c => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(c.id || '-')}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(c.remoteAddr || c.remote_addr || '-')}</td>
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(c.path || '-')}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(c.bytesReceived || c.bytes_received || 0)}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(c.bytesSent || c.bytes_sent || 0)}</td>
+        </tr>
+    `).join('');
+}
+
+function renderSessions(tbodyId, sessions) {
+    const tbody = document.getElementById(tbodyId);
+    
+    if (!sessions || sessions.length === 0) {
+        const cols = tbody.closest('table').querySelector('thead tr').children.length;
+        tbody.innerHTML = `<tr><td colspan="${cols}" class="px-6 py-12 text-center text-gray-500">No sessions</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = sessions.map(s => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.id || '-')}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(s.remoteAddr || s.remote_addr || '-')}</td>
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.path || '-')}</td>
+            <td class="px-6 py-4 text-sm">
+                <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
+                    ${s.ready ? 'Ready' : s.state || 'Unknown'}
+                </span>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadRuntimeHLS() {
+    try {
+        const [connections, sessions] = await Promise.all([
+            fetchAPI('/runtime/hls/connections'),
+            fetchAPI('/runtime/hls/sessions'),
+        ]);
+        
+        if (connections.success) renderConnections('hls-connections-body', connections.data.items || []);
+        if (sessions.success) renderSessions('hls-sessions-body', sessions.data.items || []);
+        
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+    }
+}
+
+async function loadRuntimeRTSP() {
+    try {
+        const [connections, sessions] = await Promise.all([
+            fetchAPI('/runtime/rtsp/connections'),
+            fetchAPI('/runtime/rtsp/sessions'),
+        ]);
+        
+        if (connections.success) renderConnections('rtsp-connections-body', connections.data.items || []);
+        if (sessions.success) renderSessions('rtsp-sessions-body', sessions.data.items || []);
+        
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+    }
+}
+
+async function loadRuntimeRTMP() {
+    try {
+        const [connections, sessions] = await Promise.all([
+            fetchAPI('/runtime/rtmp/connections'),
+            fetchAPI('/runtime/rtmp/sessions'),
+        ]);
+        
+        if (connections.success) renderConnections('rtmp-connections-body', connections.data.items || []);
+        if (sessions.success) renderSessions('rtmp-sessions-body', sessions.data.items || []);
+        
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+    }
+}
+
+// --- Runtime Logs ---
+
+let allLogs = [];
+
+async function loadRuntimeLogs() {
+    try {
+        const res = await fetchAPI('/logs?lines=500');
+        if (res.success) {
+            allLogs = res.data.lines || [];
+            renderLogs(allLogs);
+        }
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+        document.getElementById('logs-body').innerHTML = '<tr><td colspan="3" class="px-6 py-12 text-center text-red-600">Failed to load logs</td></tr>';
+    }
+}
+
+function renderLogs(logs) {
+    const tbody = document.getElementById('logs-body');
+    const searchTerm = document.getElementById('logs-search')?.value.toLowerCase() || '';
+    const levelFilter = document.getElementById('logs-level-filter')?.value || '';
+    
+    const filtered = logs.filter(log => {
+        const message = (log.message || '').toLowerCase();
+        const level = (log.level || '').toUpperCase();
+        const matchesSearch = !searchTerm || message.includes(searchTerm);
+        const matchesLevel = !levelFilter || level === levelFilter;
+        return matchesSearch && matchesLevel;
+    });
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-12 text-center text-gray-500">No log entries found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(log => {
+        const level = (log.level || '').toUpperCase();
+        let levelClass = 'text-gray-600';
+        if (level === 'ERROR') levelClass = 'text-red-600';
+        else if (level === 'WARN') levelClass = 'text-yellow-600';
+        else if (level === 'INFO') levelClass = 'text-blue-600';
+        else if (level === 'DEBUG') levelClass = 'text-gray-500';
+        
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-3 text-gray-500 whitespace-nowrap">${escapeHtml(log.timestamp || '-')}</td>
+                <td class="px-6 py-3"><span class="font-medium ${levelClass}">${escapeHtml(level)}</span></td>
+                <td class="px-6 py-3 text-gray-900 max-w-2xl truncate block">${escapeHtml(log.message || '-')}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Config Defaults buttons
+document.getElementById('config-defaults-save')?.addEventListener('click', saveConfigDefaults);
+document.getElementById('config-defaults-reset')?.addEventListener('click', resetConfigDefaults);
+
+// Logs search and filter
+document.getElementById('logs-search')?.addEventListener('input', () => {
+    renderLogs(allLogs);
+});
+document.getElementById('logs-level-filter')?.addEventListener('change', () => {
+    renderLogs(allLogs);
+});
+document.getElementById('logs-refresh')?.addEventListener('click', () => {
+    loadRuntimeLogs();
+});
 
 // --- Auto Refresh ---
 

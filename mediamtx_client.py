@@ -126,3 +126,80 @@ class MediaMTXClient:
 
     async def close(self):
         await self.client.aclose()
+
+    # --- Path Defaults ---
+    async def get_path_defaults(self):
+        r = await self.client.get(f"{self.base_url}/config/pathDefaults/get")
+        r.raise_for_status()
+        return r.json()
+
+    async def patch_path_defaults(self, payload):
+        r = await self.client.patch(
+            f"{self.base_url}/config/pathDefaults/patch", json=payload
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # --- Protocol Sessions/Connections ---
+    async def list_hls_connections(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/hls/connections/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    async def list_rtsp_connections(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/rtsp/connections/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    async def list_rtmp_connections(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/rtmp/connections/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    async def list_hls_sessions(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/hls/sessions/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    async def list_rtsp_sessions(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/rtsp/sessions/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    async def list_rtmp_sessions(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/rtmp/sessions/list")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return {"items": []}
+
+    # --- Metrics ---
+    async def get_metrics(self):
+        try:
+            r = await self.client.get(f"{self.base_url}/metrics")
+            r.raise_for_status()
+            return r.text()
+        except httpx.HTTPError:
+            return ""
+
+    # --- Logs ---
+    # Log reading is handled directly in the backend via file I/O
+    # This method is kept for interface compatibility but not used
+    async def read_log_file(self, path, lines=100):
+        return {"lines": [], "error": "Log reading not implemented in MediaMTX API"}
