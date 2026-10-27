@@ -1,0 +1,76 @@
+/* Custom styles for MediaMTX Dashboard */
+
+.tab-btn {
+    transition: all 0.2s ease;
+}
+
+.tab-btn.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
+}
+
+.tab-content {
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 9999px;
+}
+
+.status-online {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.status-offline {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.btn-icon {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.2s;
+}
+
+.btn-danger {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.btn-danger:hover {
+    background-color: #fecaca;
+}
+
+#connection-status.connected {
+    color: #16a34a;
+}
+
+#connection-status.disconnected {
+    color: #dc2626;
+}
+
+table th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+tr:hover {
+    background-color: #f9fafb;
+}
+
+.modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+}
