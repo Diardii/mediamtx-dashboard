@@ -180,7 +180,8 @@ function bindPageEvents(page) {
         });
     }
     if (page === 'config-global') {
-        document.getElementById('config-global-save')?.addEventListener('click', saveConfigGlobal);
+        document.getElementById('config-global-save-form')?.addEventListener('click', saveConfigGlobalForm);
+        document.getElementById('config-global-save-json')?.addEventListener('click', saveConfigGlobalJSON);
         document.getElementById('config-global-reset')?.addEventListener('click', resetConfigGlobal);
     }
     if (page === 'config-defaults') {
@@ -724,13 +725,52 @@ function openConfigPathModal(path = null) {
 
 let originalConfig = null;
 
+function setNestedValue(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (!(key in current) || current[key] === null || typeof current[key] !== 'object') {
+            current[key] = {};
+        }
+        current = current[key];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+
+function getNestedValue(obj, path) {
+    return path.split('.').reduce((o, k) => (o || {})[k], obj);
+}
+
+function parseFormValue(name, value) {
+    // Handle special types
+    if (name === 'logDestinations' || name === 'rtspTransports' || name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+        if (name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+            return value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return value; // already array from multi-select
+    }
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    if (value === '' || value === null) return null;
+    const num = Number(value);
+    if (!isNaN(num) && value.trim() !== '') return num;
+    return value;
+}
+
 async function loadConfigGlobal() {
     try {
         const res = await fetchAPI('/server/config');
         if (res.success) {
             originalConfig = res.data;
+            
+            // Populate form fields
+            populateConfigGlobalForm(res.data);
+            
+            // Populate JSON editor
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
-            document.getElementById('config-global-status').classList.add('hidden');
+            document.getElementById('config-global-form-status').classList.add('hidden');
+            document.getElementById('config-global-json-status').classList.add('hidden');
         }
         setConnectionStatus(true);
     } catch (e) {
@@ -740,41 +780,230 @@ async function loadConfigGlobal() {
     }
 }
 
-function saveConfigGlobal() {
+function populateConfigGlobalForm(config) {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return;
+    
+    // Simple fields
+    const simpleFields = [
+        'logLevel', 'logFormat', 'readTimeout', 'writeTimeout', 'readHeaderTimeout',
+        'rtspAddress', 'rtmpAddress', 'hlsAddress', 'webrtcAddress', 'srtAddress', 'playbackAddress',
+        'rtpAddress', 'rtcpAddress',
+        'webrtcICEHostNAT1To1', 'webrtcICEUDPMulticastAddress', 'webrtcICEPortRange', 'webrtcAdditionalHosts',
+        'srtLatency', 'srtMaxBandwidth',
+        'hlsAllowOrigin', 'hlsSegmentCount', 'hlsSegmentDuration', 'hlsPartDuration'
+    ];
+    
+    simpleFields.forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                if (el.type === 'checkbox') {
+                    el.checked = value;
+                } else if (el.multiple) {
+                    // multi-select handled separately
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Multi-select fields
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (Array.isArray(value)) {
+                Array.from(el.options).forEach(opt => {
+                    opt.selected = value.includes(opt.value);
+                });
+            }
+        }
+    });
+    
+    // Nested API fields
+    const apiFields = ['enabled', 'address', 'encryption', 'authentication', 'trustedProxies', 'corsOrigin'];
+    apiFields.forEach(name => {
+        const el = form.querySelector(`[name="api.${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, `api.${name}`);
+            if (value !== undefined && value !== null) {
+                if (el.multiple || name === 'trustedProxies' || name === 'corsOrigin') {
+                    if (Array.isArray(value)) {
+                        el.value = value.join(', ');
+                    } else if (typeof value === 'string') {
+                        el.value = value;
+                    }
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Metrics
+    ['metrics.enabled', 'metrics.address', 'metrics.encryption'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // PPROF
+    ['pprof.enabled', 'pprof.address'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // WebRTC encryption
+    const webrtcEncEl = form.querySelector('[name="webrtcEncryption"]');
+    if (webrtcEncEl) {
+        const value = getNestedValue(config, 'webrtcEncryption');
+        if (value !== undefined && value !== null) {
+            webrtcEncEl.value = value;
+        }
+    }
+    
+    // SRT encryption
+    const srtEncEl = form.querySelector('[name="srtEncryption"]');
+    if (srtEncEl) {
+        const value = getNestedValue(config, 'srtEncryption');
+        if (value !== undefined && value !== null) {
+            srtEncEl.value = value;
+        }
+    }
+    
+    // HLS encryption
+    const hlsEncEl = form.querySelector('[name="hlsEncryption"]');
+    if (hlsEncEl) {
+        const value = getNestedValue(config, 'hlsEncryption');
+        if (value !== undefined && value !== null) {
+            hlsEncEl.value = value;
+        }
+    }
+}
+
+function collectConfigGlobalForm() {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return {};
+    
+    const formData = new FormData(form);
+    const updates = {};
+    
+    for (const [name, value] of formData.entries()) {
+        const parsed = parseFormValue(name, value);
+        if (parsed !== null) {
+            setNestedValue(updates, name, parsed);
+        }
+    }
+    
+    // Handle multi-selects that FormData doesn't capture well
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const selected = Array.from(el.selectedOptions).map(o => o.value);
+            if (selected.length > 0) {
+                setNestedValue(updates, name, selected);
+            }
+        }
+    });
+    
+    // Handle comma-separated fields
+    ['api.trustedProxies', 'api.corsOrigin'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el && el.value.trim()) {
+            setNestedValue(updates, name, el.value.split(',').map(s => s.trim()).filter(Boolean));
+        }
+    });
+    
+    return updates;
+}
+
+async function saveConfigGlobalForm() {
+    const statusEl = document.getElementById('config-global-form-status');
+    const btn = document.getElementById('config-global-save-form');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    
+    try {
+        const updates = collectConfigGlobalForm();
+        const mergedConfig = { ...originalConfig, ...updates };
+        
+        const res = await fetchAPI('/server/config', {
+            method: 'PATCH',
+            body: JSON.stringify(mergedConfig),
+        });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-4 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
+    } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-4 text-sm text-red-600';
+    } finally {
+        statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save Form';
+    }
+}
+
+async function saveConfigGlobalJSON() {
     const editor = document.getElementById('config-global-editor');
-    const statusEl = document.getElementById('config-global-status');
+    const statusEl = document.getElementById('config-global-json-status');
+    const btn = document.getElementById('config-global-save-json');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
     
     try {
         const config = JSON.parse(editor.value);
-        
-        fetchAPI('/server/config', {
+        const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(config),
-        }).then(res => {
-            if (res.success) {
-                originalConfig = config;
-                statusEl.textContent = 'Configuration saved successfully';
-                statusEl.className = 'mt-4 text-sm text-green-600';
-                statusEl.classList.remove('hidden');
-            } else {
-                throw new Error('Failed to save');
-            }
-        }).catch(err => {
-            statusEl.textContent = `Error: ${err.message}`;
-            statusEl.className = 'mt-4 text-sm text-red-600';
-            statusEl.classList.remove('hidden');
         });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            editor.value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-3 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
     } catch (e) {
-        statusEl.textContent = 'Invalid JSON format';
-        statusEl.className = 'mt-4 text-sm text-red-600';
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-3 text-sm text-red-600';
+    } finally {
         statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save JSON';
     }
 }
 
 function resetConfigGlobal() {
     if (originalConfig) {
+        populateConfigGlobalForm(originalConfig);
         document.getElementById('config-global-editor').value = JSON.stringify(originalConfig, null, 2);
-        document.getElementById('config-global-status').classList.add('hidden');
+        document.getElementById('config-global-form-status').classList.add('hidden');
+        document.getElementById('config-global-json-status').classList.add('hidden');
     }
 }
 
