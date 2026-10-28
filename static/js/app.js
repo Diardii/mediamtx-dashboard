@@ -1178,6 +1178,14 @@ function renderConfigPaths(paths) {
         return;
     }
 
+    const columnsFromHeaders = Array.from(
+        tbody.closest('table').querySelectorAll('thead [data-config-path-column]'),
+        header => header.dataset.configPathColumn,
+    );
+    const columns = columnsFromHeaders.length
+        ? columnsFromHeaders
+        : ['name', 'type', 'source', 'fallback', 'on-demand', 'max-readers', 'actions'];
+
     tbody.innerHTML = filtered.map(p => {
         // Determine source type for display
         let sourceType = 'Publisher';
@@ -1190,26 +1198,33 @@ function renderConfigPaths(paths) {
             sourceDisplay = p.source;
         }
         
-        return `
-            <tr class="hover:bg-gray-50">
-                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
+        const cellRenderers = {
+            name: path => `<td class="px-6 py-4 font-mono text-sm">${escapeHtml(path.name)}</td>`,
+            type: () => `
                 <td class="px-6 py-4 text-sm">
                     <span class="status-badge ${sourceType === 'Publisher' ? 'status-offline' : sourceType === 'URL Source' ? 'status-online' : 'bg-purple-100 text-purple-800'}">
                         ${sourceType}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(sourceDisplay)}</td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.fallback || '-')}</td>
+                </td>`,
+            source: () => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(sourceDisplay)}</span></td>`,
+            fallback: path => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(path.fallback || '-')}</span></td>`,
+            'on-demand': path => `
                 <td class="px-6 py-4 text-sm">
-                    <span class="status-badge ${p.source_on_demand ? 'status-online' : 'status-offline'}">
-                        ${p.source_on_demand ? 'Yes' : 'No'}
+                    <span class="status-badge ${path.source_on_demand ? 'status-online' : 'status-offline'}">
+                        ${path.source_on_demand ? 'Yes' : 'No'}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm">${p.max_readers !== null && p.max_readers !== undefined ? p.max_readers : 'Unlimited'}</td>
-                <td class="px-6 py-4">
-                    <button onclick="editConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
-                    <button onclick="deleteConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
-                </td>
+                </td>`,
+            'max-readers': path => `<td class="px-6 py-4 text-sm">${path.max_readers !== null && path.max_readers !== undefined ? path.max_readers : 'Unlimited'}</td>`,
+            actions: path => `
+                <td class="px-6 py-4 text-right whitespace-nowrap">
+                    <button onclick="editConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
+                    <button onclick="deleteConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-danger">Delete</button>
+                </td>`,
+        };
+
+        return `
+            <tr class="hover:bg-gray-50">
+                ${columns.map(column => cellRenderers[column]?.(p) || '<td></td>').join('')}
             </tr>
         `;
     }).join('');
