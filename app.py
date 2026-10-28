@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -9,6 +9,7 @@ from config import settings
 from deps import get_mediamtx_client
 from mediamtx_client import MediaMTXClient
 from responses import StandardResponse
+from schemas import PathCreateRequest, PathPatchRequest
 
 
 def read_log_file(path: str, lines: int = 100):
@@ -103,9 +104,18 @@ async def list_paths(client: MediaMTXClient = Depends(get_mediamtx_client)):
 
 @app.post("/api/paths")
 async def create_path(
-    payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
+    payload: PathCreateRequest, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
-    data = await client.create_path(payload.get("name"), payload.get("source"), payload.get("source_on_demand", True))
+    data = await client.create_path(
+        name=payload.name,
+        source=payload.source,
+        source_on_demand=payload.source_on_demand,
+        source_on_demand_start_timeout=payload.source_on_demand_start_timeout,
+        source_on_demand_close_after=payload.source_on_demand_close_after,
+        max_readers=payload.max_readers,
+        fallback=payload.fallback,
+        source_redirect=payload.source_redirect,
+    )
     return StandardResponse.success(data, "Path created")
 
 
@@ -117,9 +127,11 @@ async def get_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_clie
 
 @app.patch("/api/paths/{name}")
 async def update_path(
-    name: str, payload: dict, client: MediaMTXClient = Depends(get_mediamtx_client)
+    name: str, payload: PathPatchRequest, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
-    data = await client.update_path(name, payload)
+    # Convert to dict, excluding None values
+    payload_dict = payload.model_dump(exclude_none=True)
+    data = await client.update_path(name, payload_dict)
     return StandardResponse.success(data, "Path updated")
 
 

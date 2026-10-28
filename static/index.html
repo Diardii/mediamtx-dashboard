@@ -335,16 +335,16 @@
             id="add-path-modal"
             class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50"
         >
-            <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
                 <div class="p-6">
-                    <h3 class="text-lg font-medium text-gray-900 mb-4">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4" id="path-modal-title">
                         Add New Path
                     </h3>
                     <form id="add-path-form">
                         <div class="mb-4">
                             <label
                                 class="block text-sm font-medium text-gray-700 mb-1"
-                                >Name</label
+                                >Path Name <span class="text-red-500">*</span></label
                             >
                             <input
                                 type="text"
@@ -352,11 +352,31 @@
                                 required
                                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
+                            <p class="text-xs text-gray-500 mt-1">Used by clients to access the stream (e.g., camera/front)</p>
                         </div>
+                        
                         <div class="mb-4">
                             <label
                                 class="block text-sm font-medium text-gray-700 mb-1"
-                                >Source (optional)</label
+                                >Source Type <span class="text-red-500">*</span></label
+                            >
+                            <select
+                                name="source_type"
+                                id="path-source-type"
+                                required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="publisher">Publisher (wait for stream)</option>
+                                <option value="url">URL Source (pull from external)</option>
+                                <option value="redirect">Redirect (to another path/URL)</option>
+                            </select>
+                        </div>
+
+                        <!-- Source URL (for URL source type) -->
+                        <div class="mb-4" id="source-url-field">
+                            <label
+                                class="block text-sm font-medium text-gray-700 mb-1"
+                                >Source URL <span class="text-red-500">*</span></label
                             >
                             <input
                                 type="text"
@@ -364,21 +384,100 @@
                                 placeholder="rtsp://user:pass@host:554/stream"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
+                            <p class="text-xs text-gray-500 mt-1">External stream URL. May contain credentials.</p>
                         </div>
-                        <div class="mb-4 flex items-center">
-                            <input
-                                type="checkbox"
-                                name="source_on_demand"
-                                id="source_on_demand"
-                                checked
-                                class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                            />
+
+                        <!-- Redirect Target (for Redirect type) -->
+                        <div class="mb-4 hidden" id="redirect-target-field">
                             <label
-                                for="source_on_demand"
-                                class="ml-2 text-sm text-gray-700"
-                                >Source on Demand</label
+                                class="block text-sm font-medium text-gray-700 mb-1"
+                                >Redirect Target <span class="text-red-500">*</span></label
                             >
+                            <input
+                                type="text"
+                                name="source_redirect"
+                                placeholder="camera/back or rtsp://host:554/stream"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Path name or URL to redirect readers to.</p>
                         </div>
+
+                        <!-- On-Demand Options (for URL source type) -->
+                        <fieldset class="mb-4" id="on-demand-fieldset">
+                            <legend class="text-sm font-medium text-gray-700 mb-2">On-Demand Options</legend>
+                            <div class="mb-3 flex items-center">
+                                <input
+                                    type="checkbox"
+                                    name="source_on_demand"
+                                    id="source_on_demand"
+                                    checked
+                                    class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                />
+                                <label
+                                    for="source_on_demand"
+                                    class="ml-2 text-sm text-gray-700"
+                                    >Source on Demand (open source only when readers exist)</label
+                                >
+                            </div>
+                            <div class="mb-3 ml-6" id="on-demand-timeout-field">
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    >Start Timeout</label
+                                >
+                                <input
+                                    type="text"
+                                    name="source_on_demand_start_timeout"
+                                    placeholder="10s"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <p class="text-xs text-gray-500 mt-1">Max time readers wait for source to start (e.g., 10s, 30s, 1m).</p>
+                            </div>
+                            <div class="mb-3 ml-6" id="on-demand-close-field">
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    >Close After</label
+                                >
+                                <input
+                                    type="text"
+                                    name="source_on_demand_close_after"
+                                    placeholder="10s"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <p class="text-xs text-gray-500 mt-1">Time to wait after last reader leaves before closing source (e.g., 10s, 1m).</p>
+                            </div>
+                        </fieldset>
+
+                        <!-- Max Readers -->
+                        <div class="mb-4">
+                            <label
+                                class="block text-sm font-medium text-gray-700 mb-1"
+                                >Max Readers</label
+                            >
+                            <input
+                                type="number"
+                                name="max_readers"
+                                min="0"
+                                placeholder="0 (unlimited)"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Maximum concurrent readers. 0 = unlimited.</p>
+                        </div>
+
+                        <!-- Fallback -->
+                        <div class="mb-4">
+                            <label
+                                class="block text-sm font-medium text-gray-700 mb-1"
+                                >Fallback</label
+                            >
+                            <input
+                                type="text"
+                                name="fallback"
+                                placeholder="camera/fallback or rtsp://host:554/fallback"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Path or URL used when this stream is unavailable.</p>
+                        </div>
+
                         <div class="flex justify-end space-x-3">
                             <button
                                 type="button"
@@ -389,6 +488,7 @@
                             </button>
                             <button
                                 type="submit"
+                                id="path-submit-btn"
                                 class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                             >
                                 Add Path
