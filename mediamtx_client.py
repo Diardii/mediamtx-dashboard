@@ -185,7 +185,7 @@ class MediaMTXClient:
         r.raise_for_status()
         data = r.json()
         items = data.get("items", []) or []
-        
+
         normalized = []
         for s in items:
             normalized.append({
@@ -227,7 +227,7 @@ class MediaMTXClient:
         s = next((s for s in items if s.get("name") == name), None)
         if not s:
             raise HTTPException(404, "Stream not found")
-            
+
         return {
             "name": s.get("name"),
             "ready": s.get("ready"),
@@ -240,8 +240,8 @@ class MediaMTXClient:
     # --- Sessions ---
     async def list_sessions(self):
         sessions = []
-        protocols = ["rtsp", "rtmp", "webrtc", "srt"]
-        
+        protocols = ["rtsp", "webrtc"]
+
         for proto in protocols:
             try:
                 r = await self.client.get(f"{self.base_url}/{proto}/sessions/list")
@@ -256,7 +256,8 @@ class MediaMTXClient:
                             "bytes_received": s.get("bytesReceived", 0),
                             "bytes_sent": s.get("bytesSent", 0)
                         })
-            except Exception:
+
+            except Exception as e:
                 continue
         return {"items": sessions}
 
