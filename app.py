@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
+import asyncio
 
 from config import settings
 from deps import get_mediamtx_client
@@ -17,13 +18,13 @@ def read_log_file(path: str, lines: int = 100):
     try:
         if not os.path.exists(path):
             return {"lines": [], "error": f"Log file not found: {path}"}
-        
+
         with open(path, 'r') as f:
             all_lines = f.readlines()
-        
+
         # Get the last N lines
         last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        
+
         # Parse log lines (assuming JSON format or standard log format)
         parsed_lines = []
         for line in last_lines:
@@ -34,10 +35,22 @@ def read_log_file(path: str, lines: int = 100):
                 # Try to parse as JSON (MediaMTX structured logs)
                 import json
                 log_entry = json.loads(line)
+                # Parse timestamp into a human-readable format if possible
+                raw_ts = log_entry.get("timestamp", log_entry.get("time", ""))
+                formatted_ts = raw_ts
+                if raw_ts:
+                    try:
+                        from datetime import datetime
+                        # Parse ISO8601 string (e.g. 2026-10-28T08:49:59.272353675Z)
+                        dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                        formatted_ts = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+
                 parsed_lines.append({
-                    "timestamp": log_entry.get("time", ""),
+                    "timestamp": formatted_ts,
                     "level": log_entry.get("level", ""),
-                    "message": log_entry.get("msg", "")
+                    "message": log_entry.get("message", log_entry.get("msg", ""))
                 })
             except json.JSONDecodeError:
                 # Fallback: treat as plain text
@@ -46,15 +59,42 @@ def read_log_file(path: str, lines: int = 100):
                     "level": "",
                     "message": line
                 })
-        
+
         return {"lines": parsed_lines, "error": None}
     except Exception as e:
         return {"lines": [], "error": str(e)}
 
 
+async def clean_old_logs(max_size_mb: int = 5, max_lines: int = 5000):
+    """Background task untuk membersihkan file log jika sudah terlalu besar atau terlalu banyak baris."""
+    log_path = settings.LOG_FILE_PATH
+    while True:
+        try:
+            if os.path.exists(log_path):
+                # Cek ukuran file (MB)
+                file_size_mb = os.path.getsize(log_path) / (1024 * 1024)
+                with open(log_path, 'r') as f:
+                    lines = f.readlines()
+
+                if file_size_mb > max_size_mb or len(lines) > max_lines:
+                    # Ambil hanya N baris terakhir (misal 2000 baris terbaru)
+                    keep_lines = lines[-2000:]
+                    with open(log_path, 'w') as f:
+                        f.writelines(keep_lines)
+                    print(f"[Info] Log dibersihkan. Ukuran sebelumnya: {file_size_mb:.2f}MB, baris: {len(lines)}")
+        except Exception as e:
+            print(f"[Warning] Gagal membersihkan log: {e}")
+
+        # Cek setiap 6 jam sekali
+        await asyncio.sleep(6 * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Jalankan background task pembersih log
+    clean_task = asyncio.create_task(clean_old_logs())
     yield
+    clean_task.cancel()
     MediaMTXClient.force_flush_sync()
     client = get_mediamtx_client()
     await client.close()

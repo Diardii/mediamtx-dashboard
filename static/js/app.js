@@ -19,7 +19,16 @@ function formatNumber(num) {
     return num.toLocaleString();
 }
 
+function getUptimeSeconds(startedString) {
+    if (!startedString) return 0;
+    const startTime = new Date(startedString).getTime(); // Ubah ke milidetik
+    const now = Date.getTime ? Date.now() : new Date().getTime(); // Waktu sekarang
+    const diffSeconds = Math.floor((now - startTime) / 1000); // Konversi ke detik
+    return diffSeconds > 0 ? diffSeconds : 0;
+}
+
 function formatUptime(seconds) {
+    seconds = getUptimeSeconds(seconds);
     if (!seconds) return '-';
     const d = Math.floor(seconds / 86400);
     const h = Math.floor((seconds % 86400) / 3600);
@@ -1201,9 +1210,9 @@ function renderLogs(logs) {
     tbody.innerHTML = filtered.map(log => {
         const level = (log.level || '').toUpperCase();
         let levelClass = 'text-gray-600';
-        if (level === 'ERROR') levelClass = 'text-red-600';
-        else if (level === 'WARN') levelClass = 'text-yellow-600';
-        else if (level === 'INFO') levelClass = 'text-blue-600';
+        if (level === 'ERR') levelClass = 'text-red-600';
+        else if (level === 'WAR') levelClass = 'text-yellow-600';
+        else if (level === 'INF') levelClass = 'text-blue-600';
         else if (level === 'DEBUG') levelClass = 'text-gray-500';
 
         return `

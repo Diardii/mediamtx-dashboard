@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     USE_MOCK: bool = False
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
-    LOG_FILE_PATH: str = "/var/log/mediamtx.log"
+    LOG_FILE_PATH: str = "/var/log/mediamtx/mediamtx.log"
 
 
 settings = Settings()
