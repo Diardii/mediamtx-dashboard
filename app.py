@@ -165,8 +165,16 @@ async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx
 
 @app.get("/api/sessions")
 async def list_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
-    data = await client.list_sessions()
+    """Return normalized sessions from all protocols."""
+    data = await client.list_all_sessions()
     return StandardResponse.success(data, "Sessions listed")
+
+
+@app.get("/api/sessions/rtsp")
+async def list_rtsp_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
+    """Legacy endpoint for RTSP sessions only."""
+    data = await client.list_sessions()
+    return StandardResponse.success(data, "RTSP sessions listed")
 
 
 @app.post(

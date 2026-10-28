@@ -262,9 +262,79 @@ class MediaMTXClient:
         return {"items": sessions}
 
     async def kick_session(self, type, id):
-        r = await self.client.post(f"{self.base_url}/{type}/sessions/kick/{id}")
+        # MediaMTX uses different endpoints for different protocols
+        # Connections vs Sessions endpoints vary by protocol
+        endpoint_map = {
+            "rtsp": "rtsp/sessions/kick",
+            "rtsps": "rtsp/sessions/kick",
+            "rtmp": "rtmp/sessions/kick",
+            "rtmps": "rtmp/sessions/kick",
+            "hls": "hls/connections/kick",
+            "webrtc": "webrtc/sessions/kick",
+            "srt": "srt/sessions/kick",
+            "moq": "moq/sessions/kick",
+        }
+        endpoint = endpoint_map.get(type.lower(), f"{type}/sessions/kick")
+        r = await self.client.post(f"{self.base_url}/{endpoint}/{id}")
         r.raise_for_status()
         return r.json()
+
+    async def list_all_sessions(self):
+        """Fetch sessions/connections from all available protocols and normalize."""
+        protocols = [
+            ("rtsp", "rtsp/sessions/list"),
+            ("rtsps", "rtsp/sessions/list"),
+            ("rtmp", "rtmp/sessions/list"),
+            ("rtmps", "rtmp/sessions/list"),
+            ("hls", "hls/sessions/list"),
+            ("webrtc", "webrtc/sessions/list"),
+            ("srt", "srt/sessions/list"),
+            ("moq", "moq/sessions/list"),
+        ]
+        
+        all_sessions = []
+        for proto, endpoint in protocols:
+            try:
+                r = await self.client.get(f"{self.base_url}/{endpoint}")
+                if r.status_code == 404:
+                    # Endpoint not available in this MediaMTX version
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                items = data.get("items", []) or []
+                for item in items:
+                    normalized = self._normalize_session(item, proto)
+                    if normalized:
+                        all_sessions.append(normalized)
+            except httpx.HTTPError:
+                # Protocol endpoint not available or error, skip
+                continue
+        
+        return {"items": all_sessions}
+
+    def _normalize_session(self, item, proto):
+        """Normalize session/connection item from any protocol to common schema."""
+        # MediaMTX returns different field names across protocols
+        # Common fields: id, path, remoteAddr/remote_addr, bytesReceived/bytes_received, bytesSent/bytes_sent, ready
+        session_id = item.get("id") or item.get("ID")
+        if not session_id:
+            return None
+        
+        path = item.get("path") or item.get("Path") or "-"
+        remote_addr = item.get("remoteAddr") or item.get("remote_addr") or item.get("RemoteAddr") or "-"
+        bytes_received = item.get("bytesReceived") or item.get("bytes_received") or item.get("BytesReceived") or 0
+        bytes_sent = item.get("bytesSent") or item.get("bytes_sent") or item.get("BytesSent") or 0
+        ready = item.get("ready") or item.get("Ready") or False
+        
+        return {
+            "id": session_id,
+            "type": proto,
+            "path": path,
+            "remote_addr": remote_addr,
+            "bytes_received": bytes_received,
+            "bytes_sent": bytes_sent,
+            "ready": ready,
+        }
 
     async def close(self):
         await self.client.aclose()
