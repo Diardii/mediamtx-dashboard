@@ -79,7 +79,7 @@ class MediaMTXClient:
         r.raise_for_status()
         data = r.json()
         items = data.get("items", []) or []
-        
+
         def safe_int(val):
             if isinstance(val, int):
                 return val
@@ -129,7 +129,7 @@ class MediaMTXClient:
 
     # --- Path Defaults ---
     async def get_path_defaults(self):
-        r = await self.client.get(f"{self.base_url}/config/pathDefaults/get")
+        r = await self.client.get(f"{self.base_url}/config/path-defaults/get")
         r.raise_for_status()
         return r.json()
 

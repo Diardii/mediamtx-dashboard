@@ -136,32 +136,62 @@ function getPageFromHash() {
     return hash || 'dashboard';
 }
 
-function navigateToPage(page) {
-    // Hide all pages
-    document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-    
-    // Show target page
-    const targetPage = document.getElementById(`page-${page}`);
-    if (targetPage) {
-        targetPage.classList.remove('hidden');
-    }
+async function navigateToPage(page) {
+    const knownPages = ['dashboard', 'paths', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs'];
+    const template = knownPages.includes(page) ? page : 'placeholder';
+    const content = document.getElementById('page-content');
 
-    // Update active nav link
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.remove('nav-active');
-        if (link.dataset.page === page) {
-            link.classList.add('nav-active');
+    content.innerHTML = '<div class="flex items-center justify-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>';
+
+    try {
+        const response = await fetch(`/static/pages/${template}.html`);
+        if (!response.ok) throw new Error(`Unable to load ${template} page`);
+        
+        content.innerHTML = await response.text();
+        
+        if (template === 'placeholder') {
+            document.getElementById('placeholder-title').textContent = pageTitleMap[page] || page;
         }
-    });
 
-    // Update page title
-    document.getElementById('page-title').textContent = pageTitleMap[page] || 'Dashboard';
+        // Re-bind events for the newly loaded content
+        bindPageEvents(page);
+        
+        // Update UI state
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.classList.toggle('nav-active', link.dataset.page === page);
+        });
+        document.getElementById('page-title').textContent = pageTitleMap[page] || 'Dashboard';
+        
+        currentPage = page;
+        await loadPageData(page);
+    } catch (error) {
+        content.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">Error: ${escapeHtml(error.message)}</div>`;
+        setConnectionStatus(false);
+    }
+}
 
-    // Set current page
-    currentPage = page;
-
-    // Load page data
-    loadPageData(page);
+function bindPageEvents(page) {
+    if (page === 'paths') {
+        document.getElementById('add-path-btn')?.addEventListener('click', () => {
+            openPathModal();
+        });
+        document.getElementById('paths-search')?.addEventListener('input', () => {
+            renderPaths(allPaths);
+        });
+    }
+    if (page === 'config-global') {
+        document.getElementById('config-global-save')?.addEventListener('click', saveConfigGlobal);
+        document.getElementById('config-global-reset')?.addEventListener('click', resetConfigGlobal);
+    }
+    if (page === 'config-defaults') {
+        document.getElementById('config-defaults-save')?.addEventListener('click', saveConfigDefaults);
+        document.getElementById('config-defaults-reset')?.addEventListener('click', resetConfigDefaults);
+    }
+    if (page === 'runtime-logs') {
+        document.getElementById('logs-search')?.addEventListener('input', () => renderLogs(allLogs));
+        document.getElementById('logs-level-filter')?.addEventListener('change', () => renderLogs(allLogs));
+        document.getElementById('logs-refresh')?.addEventListener('click', loadRuntimeLogs);
+    }
 }
 
 function handleHashChange() {
@@ -491,14 +521,13 @@ window.kickSession = async function(type, id) {
 const modal = document.getElementById('add-path-modal');
 const form = document.getElementById('add-path-form');
 
-document.getElementById('add-path-btn').addEventListener('click', () => openPathModal(null));
 
-document.getElementById('cancel-path-btn').addEventListener('click', () => {
+document.getElementById('cancel-path-btn')?.addEventListener('click', () => {
     modal.classList.add('hidden');
     modal.classList.remove('flex');
 });
 
-form.addEventListener('submit', async (e) => {
+form?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const name = fd.get('name');
@@ -529,13 +558,10 @@ form.addEventListener('submit', async (e) => {
 });
 
 // Paths search
-document.getElementById('paths-search')?.addEventListener('input', () => {
-    renderPaths(allPaths);
-});
+// Handled by bindPageEvents
 
 // Config Global buttons
-document.getElementById('config-global-save').addEventListener('click', saveConfigGlobal);
-document.getElementById('config-global-reset').addEventListener('click', resetConfigGlobal);
+// Handled by bindPageEvents
 
 // --- Config Path Defaults ---
 
@@ -599,9 +625,10 @@ function resetConfigDefaults() {
 
 function renderConnections(tbodyId, connections) {
     const tbody = document.getElementById(tbodyId);
-    
+    if (!tbody) return;
+
     if (!connections || connections.length === 0) {
-        const cols = tbody.closest('table').querySelector('thead tr').children.length;
+        const cols = tbody.closest('table')?.querySelector('thead tr')?.children.length || 1;
         tbody.innerHTML = `<tr><td colspan="${cols}" class="px-6 py-12 text-center text-gray-500">No connections</td></tr>`;
         return;
     }
@@ -619,9 +646,10 @@ function renderConnections(tbodyId, connections) {
 
 function renderSessions(tbodyId, sessions) {
     const tbody = document.getElementById(tbodyId);
-    
+    if (!tbody) return;
+
     if (!sessions || sessions.length === 0) {
-        const cols = tbody.closest('table').querySelector('thead tr').children.length;
+        const cols = tbody.closest('table')?.querySelector('thead tr')?.children.length || 1;
         tbody.innerHTML = `<tr><td colspan="${cols}" class="px-6 py-12 text-center text-gray-500">No sessions</td></tr>`;
         return;
     }
@@ -746,20 +774,7 @@ function renderLogs(logs) {
     }).join('');
 }
 
-// Config Defaults buttons
-document.getElementById('config-defaults-save')?.addEventListener('click', saveConfigDefaults);
-document.getElementById('config-defaults-reset')?.addEventListener('click', resetConfigDefaults);
-
-// Logs search and filter
-document.getElementById('logs-search')?.addEventListener('input', () => {
-    renderLogs(allLogs);
-});
-document.getElementById('logs-level-filter')?.addEventListener('change', () => {
-    renderLogs(allLogs);
-});
-document.getElementById('logs-refresh')?.addEventListener('click', () => {
-    loadRuntimeLogs();
-});
+// Fragment-specific controls are registered by bindPageEvents() after loading.
 
 // --- Auto Refresh ---
 
