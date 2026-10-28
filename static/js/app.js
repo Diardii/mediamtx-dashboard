@@ -184,8 +184,16 @@ function bindPageEvents(page) {
         document.getElementById('config-global-reset')?.addEventListener('click', resetConfigGlobal);
     }
     if (page === 'config-defaults') {
-        document.getElementById('config-defaults-save')?.addEventListener('click', saveConfigDefaults);
+        document.getElementById('config-defaults-form')?.addEventListener('submit', (event) => {
+            event.preventDefault();
+            saveConfigDefaults();
+        });
         document.getElementById('config-defaults-reset')?.addEventListener('click', resetConfigDefaults);
+        document.getElementById('config-defaults-form')?.addEventListener('input', (event) => {
+            if (event.target.matches('[data-config-key]')) {
+                event.currentTarget.dataset.dirty = 'true';
+            }
+        });
     }
     if (page === 'runtime-logs') {
         document.getElementById('logs-search')?.addEventListener('input', () => renderLogs(allLogs));
@@ -618,6 +626,7 @@ function openConfigPathModal(path = null) {
 // --- Config Global ---
 
 let originalConfig = null;
+let originalDefaults = null;
 
 async function loadConfigGlobal() {
     try {
@@ -902,54 +911,282 @@ window.deleteConfigPath = async function(name) {
 async function loadConfigDefaults() {
     try {
         const res = await fetchAPI('/config/path-defaults');
-        if (res.success) {
+        if (!res.success || !res.data || typeof res.data !== 'object' || Array.isArray(res.data)) {
+            throw new Error(res.message || 'MediaMTX returned an invalid Path Defaults configuration');
+        }
+
+        const form = document.getElementById('config-defaults-form');
+        const hasUnsavedChanges = form?.dataset.dirty === 'true';
+        const changedOnServer = JSON.stringify(res.data) !== JSON.stringify(originalDefaults);
+        if (!hasUnsavedChanges && (originalDefaults === null || changedOnServer)) {
             originalDefaults = res.data;
-            document.getElementById('config-defaults-editor').value = JSON.stringify(res.data, null, 2);
-            document.getElementById('config-defaults-status').classList.add('hidden');
+            renderConfigDefaults(res.data);
+            if (form) form.dataset.dirty = 'false';
+            setConfigDefaultsStatus('', '');
         }
         setConnectionStatus(true);
     } catch (e) {
         showError(e.message);
         setConnectionStatus(false);
-        document.getElementById('config-defaults-editor').value = 'Failed to load configuration';
+        setConfigDefaultsStatus(`Failed to load Path Defaults: ${e.message}`, 'error');
     }
 }
 
-function saveConfigDefaults() {
-    const editor = document.getElementById('config-defaults-editor');
-    const statusEl = document.getElementById('config-defaults-status');
-    
+function getPathDefaultsGroup(key) {
+    if (key.startsWith('runOn')) return 'Lifecycle Commands';
+    if (key.startsWith('record')) return 'Recording';
+    if (key.startsWith('alwaysAvailable') || key === 'maxReaders' || key === 'useAbsoluteTimestamp' || key === 'srtReadPassphrase') {
+        return 'Readers & Tracks';
+    }
+    if (key.startsWith('rpiCamera')) return 'Raspberry Pi Camera';
+    if (key === 'name' || key === 'source' || key.startsWith('source') || key === 'forward') {
+        return 'Source';
+    }
+    if (key.startsWith('rtsp') || key.startsWith('rtmp') || key.startsWith('srt') || key.startsWith('whep') || key.startsWith('moq') || key === 'rtpSDP') {
+        return 'Protocol Options';
+    }
+    return 'General';
+}
+
+function getPathDefaultsLabel(key) {
+    if (key === 'runOnUnDemand') return 'Run On Un-Demand';
+    return key
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/^./, (character) => character.toUpperCase());
+}
+
+function getPathDefaultsKind(key, value) {
+    if (Array.isArray(value)) return 'array';
+    if (value !== null && typeof value === 'object') return 'object';
+    if (value === null) return 'null';
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return 'number';
+    if (typeof value === 'string') return 'string';
+    throw new Error(`Unsupported Path Defaults value for "${key}"`);
+}
+
+function isPathDefaultsDuration(key, value) {
+    return typeof value === 'string' &&
+        (/timeout|closeafter|duration/i.test(key) || /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)/.test(value));
+}
+
+function renderPathDefaultsField(key, value) {
+    const kind = getPathDefaultsKind(key, value);
+    const label = getPathDefaultsLabel(key);
+    const tooltip = `MediaMTX field: ${key} (${kind})`;
+    const attributes = `data-config-key="${escapeHtml(key)}" data-config-kind="${kind}"`;
+
+    if (kind === 'boolean') {
+        return `
+            <div class="min-w-0">
+                <label class="inline-flex cursor-pointer items-center gap-3 pt-2">
+                    <input type="checkbox" ${attributes} ${value ? 'checked' : ''} class="peer sr-only">
+                    <span class="relative h-6 w-11 rounded-full bg-gray-300 transition-colors peer-checked:bg-blue-600 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2 after:absolute after:left-1 after:top-1 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span>
+                    <span class="text-sm font-medium text-gray-700">${escapeHtml(label)}</span>
+                    <span class="cursor-help text-gray-400" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">
+                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM9 8a1 1 0 1 1 2 0c0 .55-.25.79-.71 1.16-.58.46-1.29 1.04-1.29 2.34a1 1 0 1 0 2 0c0-.34.08-.48.54-.85C12.12 10.1 13 9.39 13 8a3 3 0 1 0-6 0 1 1 0 1 0 2 0Zm1 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"></path>
+                        </svg>
+                    </span>
+                </label>
+            </div>
+        `;
+    }
+
+    const valueText = kind === 'array' || kind === 'object'
+        ? JSON.stringify(value, null, 2)
+        : value === null ? '' : String(value);
+    const duration = kind === 'string' && isPathDefaultsDuration(key, value);
+    const inputClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
+    let control;
+
+    if (kind === 'array' || kind === 'object' || key.startsWith('runOn') || key === 'rtpSDP') {
+        control = `<textarea ${attributes} rows="${kind === 'array' || kind === 'object' ? 4 : 3}" class="${inputClass} font-mono" spellcheck="false">${escapeHtml(valueText)}</textarea>`;
+    } else if (kind === 'number') {
+        const step = Number.isInteger(value) ? '1' : 'any';
+        control = `<input ${attributes} type="number" step="${step}" value="${escapeHtml(valueText)}" class="${inputClass}">`;
+    } else {
+        const placeholder = duration ? 'e.g. 10s or 1h30m' : '';
+        control = `<input ${attributes} type="text" value="${escapeHtml(valueText)}" placeholder="${placeholder}" ${kind === 'null' ? 'data-config-null="true"' : ''} class="${inputClass}">`;
+    }
+
+    return `
+        <label class="block min-w-0">
+            <span class="mb-2 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                ${escapeHtml(label)}
+                <span class="cursor-help text-gray-400" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">
+                    <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM9 8a1 1 0 1 1 2 0c0 .55-.25.79-.71 1.16-.58.46-1.29 1.04-1.29 2.34a1 1 0 1 0 2 0c0-.34.08-.48.54-.85C12.12 10.1 13 9.39 13 8a3 3 0 1 0-6 0 1 1 0 1 0 2 0Zm1 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"></path>
+                    </svg>
+                </span>
+            </span>
+            ${control}
+            ${duration ? '<span class="mt-1 block text-xs text-gray-500">Enter a MediaMTX duration, such as 10s or 1h30m.</span>' : ''}
+        </label>
+    `;
+}
+
+function renderConfigDefaults(config) {
+    const container = document.getElementById('config-defaults-fields');
+    if (!container) return;
+
+    const groups = new Map();
+    Object.entries(config).forEach(([key, value]) => {
+        const group = getPathDefaultsGroup(key);
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push([key, value]);
+    });
+
+    if (groups.size === 0) {
+        container.innerHTML = '<div class="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500">MediaMTX returned no Path Defaults fields.</div>';
+        return;
+    }
+
+    container.innerHTML = Array.from(groups.entries()).map(([group, fields]) => `
+        <section class="min-w-0 rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
+            <h3 class="mb-5 text-lg font-semibold text-gray-900">${escapeHtml(group)}</h3>
+            <div class="grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                ${fields.map(([key, value]) => renderPathDefaultsField(key, value)).join('')}
+            </div>
+        </section>
+    `).join('');
+}
+
+function setConfigDefaultsStatus(message, type) {
+    const status = document.getElementById('config-defaults-status');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `text-sm ${type === 'error' ? 'text-red-600' : type === 'success' ? 'text-green-700' : 'hidden'}`;
+}
+
+function parsePathDefaultsDuration(value, key) {
+    const durationPattern = /[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)/g;
+    const parts = value.match(durationPattern);
+    if (!parts || parts.join('') !== value) {
+        throw new Error(`${getPathDefaultsLabel(key)} must be a valid duration, such as 10s or 1h30m.`);
+    }
+    return value;
+}
+
+function validatePathDefaultsValueShape(expected, value, path) {
+    if (Array.isArray(expected)) {
+        if (!Array.isArray(value)) throw new Error(`${path} must be a JSON array.`);
+        if (expected.length > 0) {
+            value.forEach((item, index) => validatePathDefaultsValueShape(expected[0], item, `${path}[${index}]`));
+        }
+        return;
+    }
+
+    if (expected !== null && typeof expected === 'object') {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error(`${path} must be a JSON object.`);
+        }
+        Object.entries(expected).forEach(([key, expectedValue]) => {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                validatePathDefaultsValueShape(expectedValue, value[key], `${path}.${key}`);
+            }
+        });
+        return;
+    }
+
+    if (expected === null ? value !== null : typeof value !== typeof expected) {
+        throw new Error(`${path} must have the same value type as the loaded MediaMTX configuration.`);
+    }
+    if (typeof expected === 'number' && Number.isInteger(expected) && !Number.isInteger(value)) {
+        throw new Error(`${path} must be an integer.`);
+    }
+}
+
+function collectConfigDefaults() {
+    const form = document.getElementById('config-defaults-form');
+    const controls = Array.from(form.querySelectorAll('[data-config-key]'));
+    const values = {};
+
+    Object.entries(originalDefaults).forEach(([key, originalValue]) => {
+        const control = controls.find((candidate) => candidate.dataset.configKey === key);
+        if (!control) throw new Error(`Missing form field for "${key}".`);
+
+        const kind = control.dataset.configKind;
+        if (kind === 'boolean') {
+            values[key] = control.checked;
+        } else if (kind === 'number') {
+            if (control.value.trim() === '') {
+                throw new Error(`${getPathDefaultsLabel(key)} must be a number.`);
+            }
+            const numberValue = Number(control.value);
+            if (!Number.isFinite(numberValue) || (Number.isInteger(originalValue) && !Number.isInteger(numberValue))) {
+                throw new Error(`${getPathDefaultsLabel(key)} must be a valid ${Number.isInteger(originalValue) ? 'integer' : 'number'}.`);
+            }
+            values[key] = numberValue;
+        } else if (kind === 'array' || kind === 'object') {
+            let parsed;
+            try {
+                parsed = JSON.parse(control.value);
+            } catch {
+                throw new Error(`${getPathDefaultsLabel(key)} must contain valid JSON.`);
+            }
+            if (kind === 'array' ? !Array.isArray(parsed) : parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error(`${getPathDefaultsLabel(key)} must remain a JSON ${kind}.`);
+            }
+            validatePathDefaultsValueShape(originalValue, parsed, getPathDefaultsLabel(key));
+            values[key] = parsed;
+        } else if (kind === 'null' && control.dataset.configNull === 'true' && control.value === '') {
+            values[key] = null;
+        } else {
+            const value = control.value;
+            values[key] = isPathDefaultsDuration(key, originalValue)
+                ? parsePathDefaultsDuration(value, key)
+                : value;
+        }
+    });
+
+    return values;
+}
+
+async function saveConfigDefaults() {
+    const form = document.getElementById('config-defaults-form');
+    const saveButton = document.getElementById('config-defaults-save');
+
     try {
-        const config = JSON.parse(editor.value);
-        
-        fetchAPI('/config/path-defaults', {
+        const config = collectConfigDefaults();
+        saveButton.disabled = true;
+        saveButton.classList.add('opacity-60', 'cursor-not-allowed');
+
+        const res = await fetchAPI('/config/path-defaults', {
             method: 'PATCH',
             body: JSON.stringify(config),
-        }).then(res => {
-            if (res.success) {
-                originalDefaults = config;
-                statusEl.textContent = 'Configuration saved successfully';
-                statusEl.className = 'mt-4 text-sm text-green-600';
-                statusEl.classList.remove('hidden');
-            } else {
-                throw new Error('Failed to save');
-            }
-        }).catch(err => {
-            statusEl.textContent = `Error: ${err.message}`;
-            statusEl.className = 'mt-4 text-sm text-red-600';
-            statusEl.classList.remove('hidden');
         });
+        if (!res.success) throw new Error(res.message || 'MediaMTX did not apply the Path Defaults configuration');
+
+        const latest = await fetchAPI('/config/path-defaults');
+        if (!latest.success || !latest.data || typeof latest.data !== 'object' || Array.isArray(latest.data)) {
+            throw new Error('The runtime accepted the update, but the updated values could not be reloaded for confirmation.');
+        }
+
+        originalDefaults = latest.data;
+        renderConfigDefaults(originalDefaults);
+        form.dataset.dirty = 'false';
+        setConfigDefaultsStatus(
+            'Path Defaults updated in the MediaMTX runtime. This change is not written to mediamtx.yml and will be lost after a MediaMTX restart.',
+            'success'
+        );
+        setConnectionStatus(true);
     } catch (e) {
-        statusEl.textContent = 'Invalid JSON format';
-        statusEl.className = 'mt-4 text-sm text-red-600';
-        statusEl.classList.remove('hidden');
+        showError(e.message);
+        setConfigDefaultsStatus(`Unable to update Path Defaults: ${e.message}`, 'error');
+    } finally {
+        if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
     }
 }
 
 function resetConfigDefaults() {
-    if (originalDefaults) {
-        document.getElementById('config-defaults-editor').value = JSON.stringify(originalDefaults, null, 2);
-        document.getElementById('config-defaults-status').classList.add('hidden');
+    if (originalDefaults !== null) {
+        renderConfigDefaults(originalDefaults);
+        document.getElementById('config-defaults-form').dataset.dirty = 'false';
+        setConfigDefaultsStatus('', '');
     }
 }
 

@@ -166,7 +166,7 @@ class MediaMTXClient:
 
     async def patch_path_defaults(self, payload):
         r = await self.client.patch(
-            f"{self.base_url}/config/pathDefaults/patch", json=payload
+            f"{self.base_url}/config/path-defaults/patch", json=payload
         )
         r.raise_for_status()
         return r.json()
@@ -174,7 +174,7 @@ class MediaMTXClient:
     # --- Protocol Sessions/Connections ---
     async def list_hls_connections(self):
         try:
-            r = await self.client.get(f"{self.base_url}/hls/connections/list")
+            r = await self.client.get(f"{self.base_url}/hls/conns/list")
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError:
@@ -182,7 +182,7 @@ class MediaMTXClient:
 
     async def list_rtsp_connections(self):
         try:
-            r = await self.client.get(f"{self.base_url}/rtsp/connections/list")
+            r = await self.client.get(f"{self.base_url}/rtsp/conns/list")
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError:
@@ -190,7 +190,7 @@ class MediaMTXClient:
 
     async def list_rtmp_connections(self):
         try:
-            r = await self.client.get(f"{self.base_url}/rtmp/connections/list")
+            r = await self.client.get(f"{self.base_url}/rtmp/conns/list")
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError:
