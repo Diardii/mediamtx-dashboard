@@ -4,34 +4,329 @@
         <p class="text-gray-600 mt-1">Global MediaMTX server configuration</p>
     </div>
 
-    <div class="bg-white rounded-lg border border-gray-200 p-6 max-w-3xl">
-        <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2"
-                >Configuration (JSON)</label
-            >
+    <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <!-- Form Section -->
+        <div class="p-6 border-b border-gray-200">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium text-gray-900">Interactive Form</h3>
+                <div class="flex items-center gap-3">
+                    <button
+                        id="config-global-reset"
+                        class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                        Reset Form
+                    </button>
+                    <button
+                        id="config-global-save-form"
+                        class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                        Save Form
+                    </button>
+                </div>
+            </div>
+            <div id="config-global-form-status" class="mt-4 text-sm hidden"></div>
+
+            <!-- Logging -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">Logging</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Log Level</label>
+                        <select name="logLevel" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="debug">debug</option>
+                            <option value="info">info</option>
+                            <option value="warn">warn</option>
+                            <option value="error">error</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Log Format</label>
+                        <select name="logFormat" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="text">text</option>
+                            <option value="json">json</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Log Destinations</label>
+                        <select name="logDestinations" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" multiple>
+                            <option value="stdout">stdout</option>
+                            <option value="stderr">stderr</option>
+                            <option value="file">file</option>
+                            <option value="syslog">syslog</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- API / Control API -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">Control API</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Enabled</label>
+                        <select name="api.enabled" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        <input type="text" name="api.address" placeholder=":9997" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Encryption</label>
+                        <select name="api.encryption" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="no">no</option>
+                            <option value="yes">yes</option>
+                            <option value="mutual">mutual</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Authentication Method</label>
+                        <select name="api.authentication" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">none</option>
+                            <option value="internal">internal</option>
+                            <option value="external">external</option>
+                            <option value="jwt">jwt</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Trusted Proxies (comma-separated)</label>
+                        <input type="text" name="api.trustedProxies" placeholder="127.0.0.1, 10.0.0.0/8" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">CORS Origins (comma-separated)</label>
+                        <input type="text" name="api.corsOrigin" placeholder="*, https://example.com" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Metrics -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">Metrics (Prometheus)</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Enabled</label>
+                        <select name="metrics.enabled" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        <input type="text" name="metrics.address" placeholder=":9998" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Encryption</label>
+                        <select name="metrics.encryption" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="no">no</option>
+                            <option value="yes">yes</option>
+                            <option value="mutual">mutual</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- PPROF -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">PPROF (Profiling)</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Enabled</label>
+                        <select name="pprof.enabled" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        <input type="text" name="pprof.address" placeholder=":9999" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- General Timeouts -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">General Timeouts</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Read Timeout</label>
+                        <input type="text" name="readTimeout" placeholder="10s" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Duration format (e.g., 10s, 1m, 1h)</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Write Timeout</label>
+                        <input type="text" name="writeTimeout" placeholder="10s" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Read Header Timeout</label>
+                        <input type="text" name="readHeaderTimeout" placeholder="10s" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Listeners -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">Listeners</legend>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">RTSP Address</label>
+                        <input type="text" name="rtspAddress" placeholder=":8554" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">RTMP Address</label>
+                        <input type="text" name="rtmpAddress" placeholder=":1935" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">HLS Address</label>
+                        <input type="text" name="hlsAddress" placeholder=":8888" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">WebRTC Address</label>
+                        <input type="text" name="webrtcAddress" placeholder=":8889" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">SRT Address</label>
+                        <input type="text" name="srtAddress" placeholder=":8890" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Playback Address</label>
+                        <input type="text" name="playbackAddress" placeholder=":8887" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- RTSP Specific -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">RTSP Settings</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Protocols</label>
+                        <select name="rtspTransports" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" multiple>
+                            <option value="tcp">tcp</option>
+                            <option value="udp">udp</option>
+                            <option value="multicast">multicast</option>
+                            <option value="udp-multicast">udp-multicast</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">RTP Address</label>
+                        <input type="text" name="rtpAddress" placeholder=":8000" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">RTCP Address</label>
+                        <input type="text" name="rtcpAddress" placeholder=":8001" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- WebRTC Specific -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">WebRTC Settings</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ICE Host NAT 1:1</label>
+                        <input type="text" name="webrtcICEHostNAT1To1" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ICE UDP Multicast Address</label>
+                        <input type="text" name="webrtcICEUDPMulticastAddress" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ICE Port Range</label>
+                        <input type="text" name="webrtcICEPortRange" placeholder="50000-50100" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Additional Hosts (comma-separated)</label>
+                        <input type="text" name="webrtcAdditionalHosts" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Encryption</label>
+                        <select name="webrtcEncryption" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="no">no</option>
+                            <option value="yes">yes</option>
+                            <option value="mutual">mutual</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- SRT Specific -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">SRT Settings</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Latency</label>
+                        <input type="text" name="srtLatency" placeholder="100ms" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Max Bandwidth</label>
+                        <input type="text" name="srtMaxBandwidth" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Encryption</label>
+                        <select name="srtEncryption" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="no">no</option>
+                            <option value="yes">yes</option>
+                            <option value="mutual">mutual</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- HLS Specific -->
+            <fieldset class="mb-6">
+                <legend class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-200">HLS Settings</legend>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Encryption</label>
+                        <select name="hlsEncryption" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="no">no</option>
+                            <option value="yes">yes</option>
+                            <option value="mutual">mutual</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Allow Origin</label>
+                        <input type="text" name="hlsAllowOrigin" placeholder="*" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Segment Count</label>
+                        <input type="number" name="hlsSegmentCount" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Segment Duration</label>
+                        <input type="text" name="hlsSegmentDuration" placeholder="5s" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Part Duration</label>
+                        <input type="text" name="hlsPartDuration" placeholder="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </fieldset>
+        </div>
+
+        <!-- Advanced JSON Editor Section -->
+        <div class="p-6 border-b border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium text-gray-900">Advanced (JSON Editor)</h3>
+                <button
+                    id="config-global-save-json"
+                    class="px-4 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                    Save JSON
+                </button>
+            </div>
+            <p class="text-sm text-gray-500 mb-3">Full configuration JSON. Only use for settings not covered by the form above.</p>
             <textarea
                 id="config-global-editor"
-                class="w-full font-mono text-sm bg-gray-50 border border-gray-300 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                rows="20"
+                class="w-full font-mono text-sm bg-white border border-gray-300 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows="15"
                 spellcheck="false"
             ></textarea>
+            <div id="config-global-json-status" class="mt-3 text-sm hidden"></div>
         </div>
-        <div class="flex justify-end space-x-3">
-            <button
-                id="config-global-reset"
-                class="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-                Reset
-            </button>
-            <button
-                id="config-global-save"
-                class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-                Save Changes
-            </button>
-        </div>
-        <div id="config-global-status" class="mt-4 text-sm hidden"></div>
     </div>
 </div>
-
-<!-- Placeholder Pages -->

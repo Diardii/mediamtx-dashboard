@@ -180,7 +180,8 @@ function bindPageEvents(page) {
         });
     }
     if (page === 'config-global') {
-        document.getElementById('config-global-save')?.addEventListener('click', saveConfigGlobal);
+        document.getElementById('config-global-save-form')?.addEventListener('click', saveConfigGlobalForm);
+        document.getElementById('config-global-save-json')?.addEventListener('click', saveConfigGlobalJSON);
         document.getElementById('config-global-reset')?.addEventListener('click', resetConfigGlobal);
     }
     if (page === 'config-defaults') {
@@ -248,29 +249,91 @@ async function loadPageData(page) {
     }
 }
 
+function formatUptimeFromStart(started) {
+    if (!started) return '-';
+    const startTime = new Date(started).getTime();
+    const now = Date.now();
+    const diffMs = now - startTime;
+    if (diffMs <= 0) return '-';
+    return formatUptime(Math.floor(diffMs / 1000));
+}
+
 // --- Dashboard ---
 
 async function loadDashboard() {
+    let anySuccess = false;
+    
+    // 1. Streams summary (Total/Online/Offline streams, viewers, traffic)
     try {
-        const [summary, streams, sessions, health, config] = await Promise.all([
-            fetchAPI('/streams/summary'),
-            fetchAPI('/streams'),
-            fetchAPI('/sessions'),
-            fetchAPI('/server/health'),
-            fetchAPI('/server/config'),
-        ]);
-
-        if (summary.success) renderSummary(summary.data);
-        if (streams.success) renderStreams(streams.data.items);
-        if (sessions.success) renderSessions(sessions.data.items);
-        if (health.success) renderServerStatus(health.data);
-        if (config.success) renderServerConfig(config.data);
-
-        setConnectionStatus(true);
+        const summary = await fetchAPI('/streams/summary');
+        if (summary.success) {
+            renderSummary(summary.data);
+            anySuccess = true;
+        } else {
+            renderSummaryError();
+        }
     } catch (e) {
-        showError(e.message);
-        setConnectionStatus(false);
+        showError('streams/summary: ' + e.message);
+        renderSummaryError();
     }
+
+    // 2. Streams list (table)
+    try {
+        const streams = await fetchAPI('/streams');
+        if (streams.success) {
+            renderStreams(streams.data.items);
+        } else {
+            renderStreamsError();
+        }
+    } catch (e) {
+        showError('streams: ' + e.message);
+        renderStreamsError();
+    }
+
+    // 3. Sessions from all protocols (table)
+    try {
+        const sessions = await fetchAPI('/sessions');
+        if (sessions.success) {
+            renderSessions(sessions.data.items);
+        } else {
+            renderSessionsError();
+        }
+    } catch (e) {
+        showError('sessions: ' + e.message);
+        renderSessionsError();
+    }
+
+    // 4. Server health (version, connection status, uptime from started)
+    try {
+        const health = await fetchAPI('/server/health');
+        if (health.success) {
+            renderServerStatus(health.data);
+        } else {
+            renderServerStatusError();
+        }
+    } catch (e) {
+        showError('server/health: ' + e.message);
+        renderServerStatusError();
+    }
+
+    // 5. Total Paths from config paths endpoint
+    try {
+        const paths = await fetchAPI('/paths');
+        if (paths.success) {
+            const pathCount = (paths.data.items || []).length;
+            document.getElementById('server-total-paths').textContent = formatNumber(pathCount);
+        } else {
+            document.getElementById('server-total-paths').textContent = '-';
+        }
+    } catch (e) {
+        showError('paths: ' + e.message);
+        document.getElementById('server-total-paths').textContent = '-';
+    }
+
+    // 6. Active paths and total readers already rendered by summary
+    // (server-active-paths, server-total-readers, server-traffic)
+    
+    setConnectionStatus(anySuccess);
 }
 
 function renderSummary(data) {
@@ -284,6 +347,49 @@ function renderSummary(data) {
         `${formatBytes(data.total_bytes_received)} / ${formatBytes(data.total_bytes_sent)}`;
     document.getElementById('server-total-readers').textContent = formatNumber(data.total_readers);
     document.getElementById('server-active-paths').textContent = formatNumber(data.online);
+}
+
+function renderSummaryError() {
+    document.getElementById('stat-total').textContent = '-';
+    document.getElementById('stat-online').textContent = '-';
+    document.getElementById('stat-offline').textContent = '-';
+    document.getElementById('stat-viewers').textContent = '-';
+    document.getElementById('server-traffic').textContent = '- / -';
+    document.getElementById('server-total-readers').textContent = '-';
+    document.getElementById('server-active-paths').textContent = '-';
+}
+
+function renderStreamsError() {
+    const tbody = document.getElementById('streams-table-body');
+    const countEl = document.getElementById('streams-count');
+    countEl.textContent = 'Error';
+    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-12 text-center text-red-600">Failed to load streams</td></tr>';
+}
+
+function renderSessionsError() {
+    const tbody = document.getElementById('sessions-table-body');
+    const countEl = document.getElementById('sessions-count');
+    countEl.textContent = 'Error';
+    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-red-600">Failed to load sessions</td></tr>';
+}
+
+function renderServerStatusError() {
+    const statusEl = document.getElementById('server-connection-status');
+    statusEl.textContent = 'Error';
+    statusEl.className = 'px-3 py-1 text-sm rounded-lg bg-red-100 text-red-800';
+    document.getElementById('server-version').textContent = '-';
+    document.getElementById('server-uptime').textContent = '-';
+}
+
+function renderServerStatus(health) {
+    const connected = health.connected === true;
+    const statusEl = document.getElementById('server-connection-status');
+    statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+    statusEl.className = `px-3 py-1 text-sm rounded-lg ${connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+    
+    document.getElementById('server-version').textContent = health.version || 'unknown';
+    // Use 'started' field from MediaMTX /info endpoint to calculate uptime
+    document.getElementById('server-uptime').textContent = formatUptimeFromStart(health.started);
 }
 
 function renderStreams(streams) {
@@ -628,13 +734,52 @@ function openConfigPathModal(path = null) {
 let originalConfig = null;
 let originalDefaults = null;
 
+function setNestedValue(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (!(key in current) || current[key] === null || typeof current[key] !== 'object') {
+            current[key] = {};
+        }
+        current = current[key];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+
+function getNestedValue(obj, path) {
+    return path.split('.').reduce((o, k) => (o || {})[k], obj);
+}
+
+function parseFormValue(name, value) {
+    // Handle special types
+    if (name === 'logDestinations' || name === 'rtspTransports' || name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+        if (name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+            return value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return value; // already array from multi-select
+    }
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    if (value === '' || value === null) return null;
+    const num = Number(value);
+    if (!isNaN(num) && value.trim() !== '') return num;
+    return value;
+}
+
 async function loadConfigGlobal() {
     try {
         const res = await fetchAPI('/server/config');
         if (res.success) {
             originalConfig = res.data;
+            
+            // Populate form fields
+            populateConfigGlobalForm(res.data);
+            
+            // Populate JSON editor
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
-            document.getElementById('config-global-status').classList.add('hidden');
+            document.getElementById('config-global-form-status').classList.add('hidden');
+            document.getElementById('config-global-json-status').classList.add('hidden');
         }
         setConnectionStatus(true);
     } catch (e) {
@@ -644,41 +789,230 @@ async function loadConfigGlobal() {
     }
 }
 
-function saveConfigGlobal() {
+function populateConfigGlobalForm(config) {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return;
+    
+    // Simple fields
+    const simpleFields = [
+        'logLevel', 'logFormat', 'readTimeout', 'writeTimeout', 'readHeaderTimeout',
+        'rtspAddress', 'rtmpAddress', 'hlsAddress', 'webrtcAddress', 'srtAddress', 'playbackAddress',
+        'rtpAddress', 'rtcpAddress',
+        'webrtcICEHostNAT1To1', 'webrtcICEUDPMulticastAddress', 'webrtcICEPortRange', 'webrtcAdditionalHosts',
+        'srtLatency', 'srtMaxBandwidth',
+        'hlsAllowOrigin', 'hlsSegmentCount', 'hlsSegmentDuration', 'hlsPartDuration'
+    ];
+    
+    simpleFields.forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                if (el.type === 'checkbox') {
+                    el.checked = value;
+                } else if (el.multiple) {
+                    // multi-select handled separately
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Multi-select fields
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (Array.isArray(value)) {
+                Array.from(el.options).forEach(opt => {
+                    opt.selected = value.includes(opt.value);
+                });
+            }
+        }
+    });
+    
+    // Nested API fields
+    const apiFields = ['enabled', 'address', 'encryption', 'authentication', 'trustedProxies', 'corsOrigin'];
+    apiFields.forEach(name => {
+        const el = form.querySelector(`[name="api.${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, `api.${name}`);
+            if (value !== undefined && value !== null) {
+                if (el.multiple || name === 'trustedProxies' || name === 'corsOrigin') {
+                    if (Array.isArray(value)) {
+                        el.value = value.join(', ');
+                    } else if (typeof value === 'string') {
+                        el.value = value;
+                    }
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Metrics
+    ['metrics.enabled', 'metrics.address', 'metrics.encryption'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // PPROF
+    ['pprof.enabled', 'pprof.address'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // WebRTC encryption
+    const webrtcEncEl = form.querySelector('[name="webrtcEncryption"]');
+    if (webrtcEncEl) {
+        const value = getNestedValue(config, 'webrtcEncryption');
+        if (value !== undefined && value !== null) {
+            webrtcEncEl.value = value;
+        }
+    }
+    
+    // SRT encryption
+    const srtEncEl = form.querySelector('[name="srtEncryption"]');
+    if (srtEncEl) {
+        const value = getNestedValue(config, 'srtEncryption');
+        if (value !== undefined && value !== null) {
+            srtEncEl.value = value;
+        }
+    }
+    
+    // HLS encryption
+    const hlsEncEl = form.querySelector('[name="hlsEncryption"]');
+    if (hlsEncEl) {
+        const value = getNestedValue(config, 'hlsEncryption');
+        if (value !== undefined && value !== null) {
+            hlsEncEl.value = value;
+        }
+    }
+}
+
+function collectConfigGlobalForm() {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return {};
+    
+    const formData = new FormData(form);
+    const updates = {};
+    
+    for (const [name, value] of formData.entries()) {
+        const parsed = parseFormValue(name, value);
+        if (parsed !== null) {
+            setNestedValue(updates, name, parsed);
+        }
+    }
+    
+    // Handle multi-selects that FormData doesn't capture well
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const selected = Array.from(el.selectedOptions).map(o => o.value);
+            if (selected.length > 0) {
+                setNestedValue(updates, name, selected);
+            }
+        }
+    });
+    
+    // Handle comma-separated fields
+    ['api.trustedProxies', 'api.corsOrigin'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el && el.value.trim()) {
+            setNestedValue(updates, name, el.value.split(',').map(s => s.trim()).filter(Boolean));
+        }
+    });
+    
+    return updates;
+}
+
+async function saveConfigGlobalForm() {
+    const statusEl = document.getElementById('config-global-form-status');
+    const btn = document.getElementById('config-global-save-form');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    
+    try {
+        const updates = collectConfigGlobalForm();
+        const mergedConfig = { ...originalConfig, ...updates };
+        
+        const res = await fetchAPI('/server/config', {
+            method: 'PATCH',
+            body: JSON.stringify(mergedConfig),
+        });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-4 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
+    } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-4 text-sm text-red-600';
+    } finally {
+        statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save Form';
+    }
+}
+
+async function saveConfigGlobalJSON() {
     const editor = document.getElementById('config-global-editor');
-    const statusEl = document.getElementById('config-global-status');
+    const statusEl = document.getElementById('config-global-json-status');
+    const btn = document.getElementById('config-global-save-json');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
     
     try {
         const config = JSON.parse(editor.value);
-        
-        fetchAPI('/server/config', {
+        const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(config),
-        }).then(res => {
-            if (res.success) {
-                originalConfig = config;
-                statusEl.textContent = 'Configuration saved successfully';
-                statusEl.className = 'mt-4 text-sm text-green-600';
-                statusEl.classList.remove('hidden');
-            } else {
-                throw new Error('Failed to save');
-            }
-        }).catch(err => {
-            statusEl.textContent = `Error: ${err.message}`;
-            statusEl.className = 'mt-4 text-sm text-red-600';
-            statusEl.classList.remove('hidden');
         });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            editor.value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-3 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
     } catch (e) {
-        statusEl.textContent = 'Invalid JSON format';
-        statusEl.className = 'mt-4 text-sm text-red-600';
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-3 text-sm text-red-600';
+    } finally {
         statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save JSON';
     }
 }
 
 function resetConfigGlobal() {
     if (originalConfig) {
+        populateConfigGlobalForm(originalConfig);
         document.getElementById('config-global-editor').value = JSON.stringify(originalConfig, null, 2);
-        document.getElementById('config-global-status').classList.add('hidden');
+        document.getElementById('config-global-form-status').classList.add('hidden');
+        document.getElementById('config-global-json-status').classList.add('hidden');
     }
 }
 
@@ -853,6 +1187,14 @@ function renderConfigPaths(paths) {
         return;
     }
 
+    const columnsFromHeaders = Array.from(
+        tbody.closest('table').querySelectorAll('thead [data-config-path-column]'),
+        header => header.dataset.configPathColumn,
+    );
+    const columns = columnsFromHeaders.length
+        ? columnsFromHeaders
+        : ['name', 'type', 'source', 'fallback', 'on-demand', 'max-readers', 'actions'];
+
     tbody.innerHTML = filtered.map(p => {
         // Determine source type for display
         let sourceType = 'Publisher';
@@ -865,26 +1207,33 @@ function renderConfigPaths(paths) {
             sourceDisplay = p.source;
         }
         
-        return `
-            <tr class="hover:bg-gray-50">
-                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
+        const cellRenderers = {
+            name: path => `<td class="px-6 py-4 font-mono text-sm">${escapeHtml(path.name)}</td>`,
+            type: () => `
                 <td class="px-6 py-4 text-sm">
                     <span class="status-badge ${sourceType === 'Publisher' ? 'status-offline' : sourceType === 'URL Source' ? 'status-online' : 'bg-purple-100 text-purple-800'}">
                         ${sourceType}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(sourceDisplay)}</td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.fallback || '-')}</td>
+                </td>`,
+            source: () => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(sourceDisplay)}</span></td>`,
+            fallback: path => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(path.fallback || '-')}</span></td>`,
+            'on-demand': path => `
                 <td class="px-6 py-4 text-sm">
-                    <span class="status-badge ${p.source_on_demand ? 'status-online' : 'status-offline'}">
-                        ${p.source_on_demand ? 'Yes' : 'No'}
+                    <span class="status-badge ${path.source_on_demand ? 'status-online' : 'status-offline'}">
+                        ${path.source_on_demand ? 'Yes' : 'No'}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm">${p.max_readers !== null && p.max_readers !== undefined ? p.max_readers : 'Unlimited'}</td>
-                <td class="px-6 py-4">
-                    <button onclick="editConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
-                    <button onclick="deleteConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
-                </td>
+                </td>`,
+            'max-readers': path => `<td class="px-6 py-4 text-sm">${path.max_readers !== null && path.max_readers !== undefined ? path.max_readers : 'Unlimited'}</td>`,
+            actions: path => `
+                <td class="px-6 py-4 text-right whitespace-nowrap">
+                    <button onclick="editConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
+                    <button onclick="deleteConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-danger">Delete</button>
+                </td>`,
+        };
+
+        return `
+            <tr class="hover:bg-gray-50">
+                ${columns.map(column => cellRenderers[column]?.(p) || '<td></td>').join('')}
             </tr>
         `;
     }).join('');
