@@ -137,7 +137,7 @@ function getPageFromHash() {
 }
 
 async function navigateToPage(page) {
-    const knownPages = ['dashboard', 'paths', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs'];
+    const knownPages = ['dashboard', 'paths', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs', 'config-paths'];
     const template = knownPages.includes(page) ? page : 'placeholder';
     const content = document.getElementById('page-content');
 
@@ -192,6 +192,11 @@ function bindPageEvents(page) {
         document.getElementById('logs-level-filter')?.addEventListener('change', () => renderLogs(allLogs));
         document.getElementById('logs-refresh')?.addEventListener('click', loadRuntimeLogs);
     }
+    if (page === 'config-paths') {
+        document.getElementById('config-paths-add-btn')?.addEventListener('click', () => openConfigPathModal());
+        document.getElementById('config-paths-search')?.addEventListener('input', () => renderConfigPaths(allConfigPaths));
+        document.getElementById('config-paths-refresh')?.addEventListener('click', loadConfigPaths);
+    }
 }
 
 function handleHashChange() {
@@ -230,7 +235,7 @@ async function loadPageData(page) {
             await loadRuntimeLogs();
             break;
         case 'config-paths':
-            // Placeholder - backend integration not yet available
+            await loadConfigPaths();
             break;
     }
 }
@@ -406,25 +411,134 @@ let editingPathName = null;
 function openPathModal(path = null) {
     const modal = document.getElementById('add-path-modal');
     const form = document.getElementById('add-path-form');
-    const title = document.querySelector('#add-path-modal h3');
+    const title = document.getElementById('path-modal-title');
+    const submitBtn = document.getElementById('path-submit-btn');
     
     form.reset();
     editingPathName = null;
     
+    // Reset field visibility
+    updateSourceTypeFields('publisher');
+    
     if (path) {
         title.textContent = 'Edit Path';
+        submitBtn.textContent = 'Save Changes';
         editingPathName = path.name;
-        document.querySelector('input[name="name"]').value = path.name;
-        document.querySelector('input[name="name"]').disabled = true;
-        document.querySelector('input[name="source"]').value = path.source || '';
+        
+        const nameInput = document.querySelector('input[name="name"]');
+        nameInput.value = path.name;
+        nameInput.disabled = true;
+        
+        // Determine source type from existing path data
+        let sourceType = 'publisher';
+        if (path.source_redirect) {
+            sourceType = 'redirect';
+        } else if (path.source) {
+            sourceType = 'url';
+        }
+        
+        document.getElementById('path-source-type').value = sourceType;
+        updateSourceTypeFields(sourceType);
+        
+        // Fill in the fields
+        if (path.source) {
+            // Only fill source if it's not a masked password URL
+            const sourceInput = document.querySelector('input[name="source"]');
+            if (!path.source.includes(':***@')) {
+                sourceInput.value = path.source;
+            }
+        }
+        if (path.source_redirect) {
+            document.querySelector('input[name="source_redirect"]').value = path.source_redirect;
+        }
         document.querySelector('input[name="source_on_demand"]').checked = path.source_on_demand !== false;
+        if (path.source_on_demand_start_timeout) {
+            document.querySelector('input[name="source_on_demand_start_timeout"]').value = path.source_on_demand_start_timeout;
+        }
+        if (path.source_on_demand_close_after) {
+            document.querySelector('input[name="source_on_demand_close_after"]').value = path.source_on_demand_close_after;
+        }
+        if (path.max_readers !== null && path.max_readers !== undefined) {
+            document.querySelector('input[name="max_readers"]').value = path.max_readers;
+        }
+        if (path.fallback) {
+            document.querySelector('input[name="fallback"]').value = path.fallback;
+        }
     } else {
         title.textContent = 'Add New Path';
+        submitBtn.textContent = 'Add Path';
         document.querySelector('input[name="name"]').disabled = false;
     }
     
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+}
+
+function updateSourceTypeFields(sourceType) {
+    const sourceUrlField = document.getElementById('source-url-field');
+    const redirectTargetField = document.getElementById('redirect-target-field');
+    const onDemandFieldset = document.getElementById('on-demand-fieldset');
+    const onDemandTimeoutField = document.getElementById('on-demand-timeout-field');
+    const onDemandCloseField = document.getElementById('on-demand-close-field');
+    const sourceOnDemandCheckbox = document.getElementById('source_on_demand');
+    
+    // Guard: elements may not exist if modal not yet rendered
+    if (!sourceUrlField || !redirectTargetField || !onDemandFieldset || !sourceOnDemandCheckbox) {
+        return;
+    }
+    
+    // Hide all conditional fields first
+    sourceUrlField.classList.add('hidden');
+    redirectTargetField.classList.add('hidden');
+    onDemandFieldset.classList.add('hidden');
+    if (onDemandTimeoutField) onDemandTimeoutField.classList.add('hidden');
+    if (onDemandCloseField) onDemandCloseField.classList.add('hidden');
+    
+    // Remove required attributes
+    sourceUrlField.querySelector('input')?.removeAttribute('required');
+    redirectTargetField.querySelector('input')?.removeAttribute('required');
+    
+    if (sourceType === 'url') {
+        sourceUrlField.classList.remove('hidden');
+        sourceUrlField.querySelector('input')?.setAttribute('required', 'true');
+        onDemandFieldset.classList.remove('hidden');
+        
+        // Show/hide timeout fields based on checkbox
+        if (sourceOnDemandCheckbox.checked) {
+            if (onDemandTimeoutField) onDemandTimeoutField.classList.remove('hidden');
+            if (onDemandCloseField) onDemandCloseField.classList.remove('hidden');
+        }
+    } else if (sourceType === 'redirect') {
+        redirectTargetField.classList.remove('hidden');
+        redirectTargetField.querySelector('input')?.setAttribute('required', 'true');
+    }
+    // For publisher, no extra fields needed
+}
+
+// Event listeners for modal fields (initialized after DOM ready)
+function initPathModalEvents() {
+    const sourceTypeSelect = document.getElementById('path-source-type');
+    const sourceOnDemandCheckbox = document.getElementById('source_on_demand');
+    
+    if (sourceTypeSelect) {
+        sourceTypeSelect.addEventListener('change', (e) => {
+            updateSourceTypeFields(e.target.value);
+        });
+    }
+    
+    if (sourceOnDemandCheckbox) {
+        sourceOnDemandCheckbox.addEventListener('change', (e) => {
+            const onDemandTimeoutField = document.getElementById('on-demand-timeout-field');
+            const onDemandCloseField = document.getElementById('on-demand-close-field');
+            if (e.target.checked) {
+                onDemandTimeoutField?.classList.remove('hidden');
+                onDemandCloseField?.classList.remove('hidden');
+            } else {
+                onDemandTimeoutField?.classList.add('hidden');
+                onDemandCloseField?.classList.add('hidden');
+            }
+        });
+    }
 }
 
 window.editPath = function(name) {
@@ -433,6 +547,73 @@ window.editPath = function(name) {
         openPathModal(path);
     }
 };
+
+// --- Config Path Modal (Add/Edit) ---
+
+let editingConfigPathName = null;
+
+function openConfigPathModal(path = null) {
+    // Reuse the same modal but with config-paths context
+    const modal = document.getElementById('add-path-modal');
+    const form = document.getElementById('add-path-form');
+    const title = document.getElementById('path-modal-title');
+    const submitBtn = document.getElementById('path-submit-btn');
+    
+    form.reset();
+    editingConfigPathName = null;
+    
+    // Reset field visibility
+    updateSourceTypeFields('publisher');
+    
+    if (path) {
+        title.textContent = 'Edit Path Configuration';
+        submitBtn.textContent = 'Save Changes';
+        editingConfigPathName = path.name;
+        
+        const nameInput = document.querySelector('input[name="name"]');
+        nameInput.value = path.name;
+        nameInput.disabled = true;
+        
+        // Determine source type from existing path data
+        let sourceType = 'publisher';
+        if (path.source_redirect) {
+            sourceType = 'redirect';
+        } else if (path.source) {
+            sourceType = 'url';
+        }
+        
+        document.getElementById('path-source-type').value = sourceType;
+        updateSourceTypeFields(sourceType);
+        
+        // Fill in the fields
+        if (path.source && !path.source.includes(':***@')) {
+            document.querySelector('input[name="source"]').value = path.source;
+        }
+        if (path.source_redirect) {
+            document.querySelector('input[name="source_redirect"]').value = path.source_redirect;
+        }
+        document.querySelector('input[name="source_on_demand"]').checked = path.source_on_demand !== false;
+        if (path.source_on_demand_start_timeout) {
+            document.querySelector('input[name="source_on_demand_start_timeout"]').value = path.source_on_demand_start_timeout;
+        }
+        if (path.source_on_demand_close_after) {
+            document.querySelector('input[name="source_on_demand_close_after"]').value = path.source_on_demand_close_after;
+        }
+        if (path.max_readers !== null && path.max_readers !== undefined) {
+            document.querySelector('input[name="max_readers"]').value = path.max_readers;
+        }
+        if (path.fallback) {
+            document.querySelector('input[name="fallback"]').value = path.fallback;
+        }
+    } else {
+        title.textContent = 'Add Path Configuration';
+        submitBtn.textContent = 'Add Path';
+        document.querySelector('input[name="name"]').disabled = false;
+    }
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
 
 // --- Config Global ---
 
@@ -531,29 +712,95 @@ form?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const name = fd.get('name');
-    const source = fd.get('source') || null;
-    const source_on_demand = fd.get('source_on_demand') === 'on';
+    const sourceType = fd.get('source_type');
+    
+    // Build payload based on source type
+    const payload = {
+        name,
+        source_type: sourceType,
+    };
+    
+    if (sourceType === 'url') {
+        const source = fd.get('source');
+        if (!source) {
+            alert('Source URL is required for URL Source type');
+            return;
+        }
+        payload.source = source;
+        payload.source_on_demand = fd.get('source_on_demand') === 'on';
+        if (payload.source_on_demand) {
+            const startTimeout = fd.get('source_on_demand_start_timeout');
+            const closeAfter = fd.get('source_on_demand_close_after');
+            if (startTimeout) payload.source_on_demand_start_timeout = startTimeout;
+            if (closeAfter) payload.source_on_demand_close_after = closeAfter;
+        }
+    } else if (sourceType === 'redirect') {
+        const redirectTarget = fd.get('source_redirect');
+        if (!redirectTarget) {
+            alert('Redirect target is required for Redirect type');
+            return;
+        }
+        payload.source_redirect = redirectTarget;
+    }
+    // For publisher, no source needed
+    
+    // Common optional fields
+    const maxReaders = fd.get('max_readers');
+    if (maxReaders !== '' && maxReaders !== null) {
+        const val = parseInt(maxReaders, 10);
+        if (isNaN(val) || val < 0) {
+            alert('Max readers must be a non-negative integer');
+            return;
+        }
+        payload.max_readers = val;
+    }
+    
+    const fallback = fd.get('fallback');
+    if (fallback) payload.fallback = fallback;
     
     try {
-        if (editingPathName) {
-            // Edit existing path
-            await fetchAPI(`/paths/${encodeURIComponent(editingPathName)}`, {
+        const isEditing = editingPathName || editingConfigPathName;
+        const editingName = editingPathName || editingConfigPathName;
+        
+        if (isEditing) {
+            // Edit existing path - don't send name, and don't send source if it wasn't changed (to preserve masked passwords)
+            const editPayload = { ...payload };
+            delete editPayload.name;
+            delete editPayload.source_type;
+            
+            // If source is a masked password, don't send it
+            if (editPayload.source && editPayload.source.includes(':***@')) {
+                delete editPayload.source;
+            }
+            if (editPayload.source_redirect && editPayload.source_redirect.includes(':***@')) {
+                delete editPayload.source_redirect;
+            }
+            if (editPayload.fallback && editPayload.fallback.includes(':***@')) {
+                delete editPayload.fallback;
+            }
+            
+            await fetchAPI(`/paths/${encodeURIComponent(editingName)}`, {
                 method: 'PATCH',
-                body: JSON.stringify({ source, source_on_demand }),
+                body: JSON.stringify(editPayload),
             });
         } else {
             // Add new path
             await fetchAPI('/paths', {
                 method: 'POST',
-                body: JSON.stringify({ name, source, source_on_demand }),
+                body: JSON.stringify(payload),
             });
         }
         modal.classList.add('hidden');
         modal.classList.remove('flex');
         loadPaths();
+        // Also refresh config-paths if that's the current page
+        if (currentPage === 'config-paths') {
+            loadConfigPaths();
+        }
     } catch (e) {
         showError(e.message);
-        alert(`Failed to ${editingPathName ? 'update' : 'add'} path: ${e.message}`);
+        const isEditing = editingPathName || editingConfigPathName;
+        alert(`Failed to ${isEditing ? 'update' : 'add'} path: ${e.message}`);
     }
 });
 
@@ -563,9 +810,94 @@ form?.addEventListener('submit', async (e) => {
 // Config Global buttons
 // Handled by bindPageEvents
 
-// --- Config Path Defaults ---
+// --- Config Paths ---
 
-let originalDefaults = null;
+let allConfigPaths = [];
+
+async function loadConfigPaths() {
+    try {
+        const paths = await fetchAPI('/paths');
+        if (paths.success) {
+            allConfigPaths = paths.data.items;
+            renderConfigPaths(allConfigPaths);
+        }
+        setConnectionStatus(true);
+    } catch (e) {
+        showError(e.message);
+        setConnectionStatus(false);
+    }
+}
+
+function renderConfigPaths(paths) {
+    const tbody = document.getElementById('config-paths-table-body');
+    const searchTerm = document.getElementById('config-paths-search')?.value.toLowerCase() || '';
+    
+    const filtered = paths.filter(p => 
+        p.name.toLowerCase().includes(searchTerm) || 
+        (p.source && p.source.toLowerCase().includes(searchTerm)) ||
+        (p.fallback && p.fallback.toLowerCase().includes(searchTerm)) ||
+        (p.source_redirect && p.source_redirect.toLowerCase().includes(searchTerm))
+    );
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(p => {
+        // Determine source type for display
+        let sourceType = 'Publisher';
+        let sourceDisplay = '(publisher)';
+        if (p.source_redirect) {
+            sourceType = 'Redirect';
+            sourceDisplay = p.source_redirect;
+        } else if (p.source) {
+            sourceType = 'URL Source';
+            sourceDisplay = p.source;
+        }
+        
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
+                <td class="px-6 py-4 text-sm">
+                    <span class="status-badge ${sourceType === 'Publisher' ? 'status-offline' : sourceType === 'URL Source' ? 'status-online' : 'bg-purple-100 text-purple-800'}">
+                        ${sourceType}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(sourceDisplay)}</td>
+                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.fallback || '-')}</td>
+                <td class="px-6 py-4 text-sm">
+                    <span class="status-badge ${p.source_on_demand ? 'status-online' : 'status-offline'}">
+                        ${p.source_on_demand ? 'Yes' : 'No'}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-sm">${p.max_readers !== null && p.max_readers !== undefined ? p.max_readers : 'Unlimited'}</td>
+                <td class="px-6 py-4">
+                    <button onclick="editConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
+                    <button onclick="deleteConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+window.editConfigPath = function(name) {
+    const path = allConfigPaths.find(p => p.name === name);
+    if (path) {
+        openConfigPathModal(path);
+    }
+};
+
+window.deleteConfigPath = async function(name) {
+    if (!confirm(`Delete path "${name}"?`)) return;
+    try {
+        await fetchAPI(`/paths/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        loadConfigPaths();
+    } catch (e) {
+        showError(e.message);
+        alert(`Failed to delete: ${e.message}`);
+    }
+};
 
 async function loadConfigDefaults() {
     try {
@@ -797,6 +1129,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 
 document.addEventListener('DOMContentLoaded', () => {
     initSidebar();
+    initPathModalEvents();
     
     // Handle hash changes
     window.addEventListener('hashchange', handleHashChange);

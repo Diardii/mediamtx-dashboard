@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 from pydantic import BaseModel, field_validator
 
@@ -27,29 +28,77 @@ class ServerConfigPatch(BaseModel):
 
 # --- Paths ---
 
+# Duration format regex (e.g., 10s, 30s, 1m, 1h, 1m30s)
+DURATION_PATTERN = re.compile(r'^(\d+h)?(\d+m)?(\d+s)?$')
+
+
+def validate_duration(v: Optional[str]) -> Optional[str]:
+    if v is None or v == '':
+        return None
+    if not DURATION_PATTERN.match(v):
+        raise ValueError("Invalid duration format. Use format like '10s', '1m', '1h', '1m30s'")
+    return v
+
+
 class PathCreateRequest(BaseModel):
     name: str
     source: Optional[str] = None
     source_on_demand: bool = True
+    source_on_demand_start_timeout: Optional[str] = None
+    source_on_demand_close_after: Optional[str] = None
+    max_readers: Optional[int] = None
+    fallback: Optional[str] = None
+    source_redirect: Optional[str] = None
+
+    @field_validator("max_readers", mode="before")
+    @classmethod
+    def validate_max_readers(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("max_readers must be non-negative")
+        return v
+
+    @field_validator("source_on_demand_start_timeout", "source_on_demand_close_after", mode="before")
+    @classmethod
+    def validate_duration_fields(cls, v: Optional[str]) -> Optional[str]:
+        return validate_duration(v)
 
 
 class PathPatchRequest(BaseModel):
     source: Optional[str] = None
     source_on_demand: Optional[bool] = None
+    source_on_demand_start_timeout: Optional[str] = None
+    source_on_demand_close_after: Optional[str] = None
+    max_readers: Optional[int] = None
+    fallback: Optional[str] = None
+    source_redirect: Optional[str] = None
+
+    @field_validator("max_readers", mode="before")
+    @classmethod
+    def validate_max_readers(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("max_readers must be non-negative")
+        return v
+
+    @field_validator("source_on_demand_start_timeout", "source_on_demand_close_after", mode="before")
+    @classmethod
+    def validate_duration_fields(cls, v: Optional[str]) -> Optional[str]:
+        return validate_duration(v)
 
 
 class PathDetailResponse(BaseModel):
     name: str
     source: Optional[str] = None
     source_on_demand: bool = True
-    # Additional fields from MediaMTX
+    source_on_demand_start_timeout: Optional[str] = None
+    source_on_demand_close_after: Optional[str] = None
+    max_readers: Optional[int] = None
+    fallback: Optional[str] = None
     source_redirect: Optional[str] = None
     source_protocols: Optional[list[str]] = None
     run_on_init: Optional[str] = None
     run_on_init_restart: Optional[bool] = None
-    fallback: Optional[str] = None
 
-    @field_validator("source", mode="before")
+    @field_validator("source", "fallback", "source_redirect", mode="before")
     @classmethod
     def mask_password(cls, v: Optional[str]) -> Optional[str]:
         if v and "@" in v and "://" in v:

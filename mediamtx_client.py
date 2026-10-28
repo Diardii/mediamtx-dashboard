@@ -37,10 +37,27 @@ class MediaMTXClient:
         r.raise_for_status()
         return r.json()
 
-    async def create_path(self, name, source, source_on_demand):
-        data = {"sourceOnDemand": source_on_demand}
+    async def create_path(self, name, source, source_on_demand, **kwargs):
+        data = {}
         if source:
             data["source"] = source
+            # sourceOnDemand applies to URL sources; sending it for publisher
+            # and redirect paths can make MediaMTX reject the configuration.
+            if source_on_demand is not None:
+                data["sourceOnDemand"] = source_on_demand
+        elif kwargs.get("source_redirect"):
+            data["source"] = "redirect"
+        # Optional fields
+        if kwargs.get("source_on_demand_start_timeout"):
+            data["sourceOnDemandStartTimeout"] = kwargs["source_on_demand_start_timeout"]
+        if kwargs.get("source_on_demand_close_after"):
+            data["sourceOnDemandCloseAfter"] = kwargs["source_on_demand_close_after"]
+        if kwargs.get("max_readers") is not None:
+            data["maxReaders"] = kwargs["max_readers"]
+        if kwargs.get("fallback"):
+            data["fallback"] = kwargs["fallback"]
+        if kwargs.get("source_redirect"):
+            data["sourceRedirect"] = kwargs["source_redirect"]
         r = await self.client.post(f"{self.base_url}/config/paths/add/{name}", json=data)
         r.raise_for_status()
         return r.json()
@@ -53,9 +70,23 @@ class MediaMTXClient:
         return r.json()
 
     async def update_path(self, name, payload):
+        # Map frontend field names to MediaMTX API field names
+        mapped = {}
+        field_map = {
+            "source": "source",
+            "source_on_demand": "sourceOnDemand",
+            "source_on_demand_start_timeout": "sourceOnDemandStartTimeout",
+            "source_on_demand_close_after": "sourceOnDemandCloseAfter",
+            "max_readers": "maxReaders",
+            "fallback": "fallback",
+            "source_redirect": "sourceRedirect",
+        }
+        for key, value in payload.items():
+            if key in field_map and value is not None:
+                mapped[field_map[key]] = value
         r = await self.client.patch(
             f"{self.base_url}/config/paths/patch/{name}",
-            json=payload,
+            json=mapped,
         )
         if r.status_code == 404:
             raise HTTPException(404, "Path not found")
