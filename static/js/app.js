@@ -240,29 +240,91 @@ async function loadPageData(page) {
     }
 }
 
+function formatUptimeFromStart(started) {
+    if (!started) return '-';
+    const startTime = new Date(started).getTime();
+    const now = Date.now();
+    const diffMs = now - startTime;
+    if (diffMs <= 0) return '-';
+    return formatUptime(Math.floor(diffMs / 1000));
+}
+
 // --- Dashboard ---
 
 async function loadDashboard() {
+    let anySuccess = false;
+    
+    // 1. Streams summary (Total/Online/Offline streams, viewers, traffic)
     try {
-        const [summary, streams, sessions, health, config] = await Promise.all([
-            fetchAPI('/streams/summary'),
-            fetchAPI('/streams'),
-            fetchAPI('/sessions'),
-            fetchAPI('/server/health'),
-            fetchAPI('/server/config'),
-        ]);
-
-        if (summary.success) renderSummary(summary.data);
-        if (streams.success) renderStreams(streams.data.items);
-        if (sessions.success) renderSessions(sessions.data.items);
-        if (health.success) renderServerStatus(health.data);
-        if (config.success) renderServerConfig(config.data);
-
-        setConnectionStatus(true);
+        const summary = await fetchAPI('/streams/summary');
+        if (summary.success) {
+            renderSummary(summary.data);
+            anySuccess = true;
+        } else {
+            renderSummaryError();
+        }
     } catch (e) {
-        showError(e.message);
-        setConnectionStatus(false);
+        showError('streams/summary: ' + e.message);
+        renderSummaryError();
     }
+
+    // 2. Streams list (table)
+    try {
+        const streams = await fetchAPI('/streams');
+        if (streams.success) {
+            renderStreams(streams.data.items);
+        } else {
+            renderStreamsError();
+        }
+    } catch (e) {
+        showError('streams: ' + e.message);
+        renderStreamsError();
+    }
+
+    // 3. Sessions from all protocols (table)
+    try {
+        const sessions = await fetchAPI('/sessions');
+        if (sessions.success) {
+            renderSessions(sessions.data.items);
+        } else {
+            renderSessionsError();
+        }
+    } catch (e) {
+        showError('sessions: ' + e.message);
+        renderSessionsError();
+    }
+
+    // 4. Server health (version, connection status, uptime from started)
+    try {
+        const health = await fetchAPI('/server/health');
+        if (health.success) {
+            renderServerStatus(health.data);
+        } else {
+            renderServerStatusError();
+        }
+    } catch (e) {
+        showError('server/health: ' + e.message);
+        renderServerStatusError();
+    }
+
+    // 5. Total Paths from config paths endpoint
+    try {
+        const paths = await fetchAPI('/paths');
+        if (paths.success) {
+            const pathCount = (paths.data.items || []).length;
+            document.getElementById('server-total-paths').textContent = formatNumber(pathCount);
+        } else {
+            document.getElementById('server-total-paths').textContent = '-';
+        }
+    } catch (e) {
+        showError('paths: ' + e.message);
+        document.getElementById('server-total-paths').textContent = '-';
+    }
+
+    // 6. Active paths and total readers already rendered by summary
+    // (server-active-paths, server-total-readers, server-traffic)
+    
+    setConnectionStatus(anySuccess);
 }
 
 function renderSummary(data) {
@@ -276,6 +338,49 @@ function renderSummary(data) {
         `${formatBytes(data.total_bytes_received)} / ${formatBytes(data.total_bytes_sent)}`;
     document.getElementById('server-total-readers').textContent = formatNumber(data.total_readers);
     document.getElementById('server-active-paths').textContent = formatNumber(data.online);
+}
+
+function renderSummaryError() {
+    document.getElementById('stat-total').textContent = '-';
+    document.getElementById('stat-online').textContent = '-';
+    document.getElementById('stat-offline').textContent = '-';
+    document.getElementById('stat-viewers').textContent = '-';
+    document.getElementById('server-traffic').textContent = '- / -';
+    document.getElementById('server-total-readers').textContent = '-';
+    document.getElementById('server-active-paths').textContent = '-';
+}
+
+function renderStreamsError() {
+    const tbody = document.getElementById('streams-table-body');
+    const countEl = document.getElementById('streams-count');
+    countEl.textContent = 'Error';
+    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-12 text-center text-red-600">Failed to load streams</td></tr>';
+}
+
+function renderSessionsError() {
+    const tbody = document.getElementById('sessions-table-body');
+    const countEl = document.getElementById('sessions-count');
+    countEl.textContent = 'Error';
+    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-red-600">Failed to load sessions</td></tr>';
+}
+
+function renderServerStatusError() {
+    const statusEl = document.getElementById('server-connection-status');
+    statusEl.textContent = 'Error';
+    statusEl.className = 'px-3 py-1 text-sm rounded-lg bg-red-100 text-red-800';
+    document.getElementById('server-version').textContent = '-';
+    document.getElementById('server-uptime').textContent = '-';
+}
+
+function renderServerStatus(health) {
+    const connected = health.connected === true;
+    const statusEl = document.getElementById('server-connection-status');
+    statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+    statusEl.className = `px-3 py-1 text-sm rounded-lg ${connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+    
+    document.getElementById('server-version').textContent = health.version || 'unknown';
+    // Use 'started' field from MediaMTX /info endpoint to calculate uptime
+    document.getElementById('server-uptime').textContent = formatUptimeFromStart(health.started);
 }
 
 function renderStreams(streams) {
