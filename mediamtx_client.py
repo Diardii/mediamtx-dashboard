@@ -1,3 +1,5 @@
+import yaml
+from pathlib import Path
 import httpx
 from fastapi import HTTPException
 from config import settings
@@ -9,6 +11,17 @@ class MediaMTXClient:
         base = str(settings.MEDIAMTX_API_URL).rstrip("/")
         self.base_url = f"{base}/v3"
         self.client = httpx.AsyncClient(timeout=10.0)
+        self.yaml_path = Path("mediamtx.yml")
+
+    def _save_to_yaml(self, new_config: dict):
+        """Menyimpan perubahan konfigurasi secara permanen ke file mediamtx.yml."""
+        try:
+            if self.yaml_path.exists():
+                data = yaml.safe_load(self.yaml_path.read_text()) or {}
+                data.update(new_config)
+                self.yaml_path.write_text(yaml.dump(data, sort_keys=False, allow_unicode=True))
+        except Exception as e:
+            print(f"[Warning] Gagal memperbarui mediamtx.yml: {e}")
 
     # --- Server ---
     async def get_server_health(self):
@@ -29,6 +42,7 @@ class MediaMTXClient:
             f"{self.base_url}/config/global/patch", json=payload
         )
         r.raise_for_status()
+        self._save_to_yaml(payload)
         return r.json()
 
     # --- Paths ---
