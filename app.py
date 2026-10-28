@@ -54,6 +54,7 @@ def read_log_file(path: str, lines: int = 100):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
+    MediaMTXClient.force_flush_sync()
     client = get_mediamtx_client()
     await client.close()
 

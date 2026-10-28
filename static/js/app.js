@@ -284,22 +284,33 @@ function renderStreams(streams) {
         return;
     }
 
-    tbody.innerHTML = streams.map(s => `
-        <tr class="hover:bg-gray-50">
-            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
-            <td class="px-6 py-4">
-                <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
-                    ${s.ready ? 'Online' : 'Offline'}
-                </span>
-            </td>
-            <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">
-                ${s.tracks.map(t => `${t.codec}${t.width ? ` ${t.width}x${t.height}` : ''}${t.fps ? `@${t.fps}fps` : ''}`).join(', ') || '-'}
-            </td>
-            <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
-            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
-            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = streams.map(s => {
+        const tracks = Array.isArray(s.tracks) ? s.tracks : [];
+        const trackInfo = tracks.map(t => {
+            if (typeof t !== 'object' || t === null) return 'Unknown Track';
+            const codec = t.codec || 'Unknown';
+            const resolution = t.width && t.height ? ` ${t.width}x${t.height}` : '';
+            const fps = t.fps ? `@${t.fps}fps` : '';
+            return `${codec}${resolution}${fps}`;
+        }).join(', ') || '-';
+
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
+                <td class="px-6 py-4">
+                    <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
+                        ${s.ready ? 'Online' : 'Offline'}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
+                    ${escapeHtml(trackInfo)}
+                </td>
+                <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
+                <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
+                <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function renderSessions(sessions) {
