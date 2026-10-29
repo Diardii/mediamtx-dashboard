@@ -240,3 +240,71 @@ select:focus-visible {
     outline: 2px solid #2563eb;
     outline-offset: 2px;
 }
+/* System Monitor */
+.metric-card {
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.metric-card:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border-color: #d1d5db; /* gray-300 */
+}
+
+.metric-card svg {
+    display: block;
+}
+
+/* Sparkline container */
+.relative.h-24 {
+    min-height: 96px;
+}
+
+/* Progress bar animation */
+.h-2.bg-gray-100 .bg-blue-600,
+.h-2.bg-gray-100 .bg-green-600,
+.h-2.bg-gray-100 .bg-amber-600 {
+    transition: width 0.5s ease-out;
+}
+
+/* System monitor unavailable state */
+#system-monitor-unavailable {
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive adjustments for metric cards */
+@media (max-width: 640px) {
+    .metric-card {
+        padding: 1rem;
+    }
+
+    .metric-card .text-2xl {
+        font-size: 1.5rem;
+    }
+
+    .relative.h-24 {
+        min-height: 80px;
+    }
+}
+
+/* Loading state */
+.opacity-50 {
+    opacity: 0.5;
+}
+
+.pointer-events-none {
+    pointer-events: none;
+}
+
+/* Hidden utility */
+.hidden {
+    display: none !important;
+}
+
+.flex {
+    display: flex;
+}

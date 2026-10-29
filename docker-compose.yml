@@ -12,8 +12,10 @@ services:
     environment:
       - MEDIAMTX_API_URL=http://mediamtx:9997
       - LOG_FILE_PATH=/var/log/mediamtx/mediamtx.log
+      - NODE_EXPORTER_URL=http://node-exporter:9100
     depends_on:
       - mediamtx
+      - node-exporter
     restart: unless-stopped
 
   mediamtx:
@@ -30,3 +32,14 @@ services:
         - ./logs:/var/log/mediamtx
         - /etc/localtime:/etc/localtime:ro
       restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node_exporter
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($|/)'
+    pid: host
+    volumes:
+      - '/:/host:ro'
+    restart: unless-stopped

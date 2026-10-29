@@ -72,6 +72,268 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// --- System Monitor Utilities ---
+
+function formatBytesPerSec(bytes) {
+    if (bytes === 0 || bytes === null || bytes === undefined) return '0 B/s';
+    const k = 1024;
+    const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatBytesShort(bytes) {
+    if (bytes === 0 || bytes === null || bytes === undefined) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function renderSparkline(svgId, data, color, fillColor) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !data || data.length === 0) return;
+
+    const width = svg.clientWidth || 200;
+    const height = 96; // 24 * 4
+    const padding = 2;
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+
+    // Normalize data to 0-1 range
+    const maxVal = Math.max(...data, 1);
+    const minVal = Math.min(...data, 0);
+    const range = maxVal - minVal || 1;
+
+    const points = data.map((val, i) => {
+        const x = padding + (i / Math.max(data.length - 1, 1)) * usableWidth;
+        const y = padding + usableHeight - ((val - minVal) / range) * usableHeight;
+        return `${x},${y}`;
+    });
+
+    const pathData = `M${points.join(' L')}`;
+    const fillPathData = `${pathData} L${width - padding},${height - padding} L${padding},${height - padding} Z`;
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.innerHTML = `
+        <defs>
+            <linearGradient id="sparkline-gradient-${svgId}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="${fillColor}" stop-opacity="0"/>
+            </linearGradient>
+        </defs>
+        <path d="${fillPathData}" fill="url(#sparkline-gradient-${svgId})" />
+        <path d="${pathData}" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    `;
+}
+
+function updateMetricCard(metric, data) {
+    switch (metric) {
+        case 'cpu': {
+            const usage = data.cpu?.usage;
+            const history = data.cpu?.history || [];
+            const valEl = document.getElementById('cpu-usage-value');
+            const barEl = document.getElementById('cpu-usage-bar');
+            const detailEl = document.getElementById('cpu-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                detailEl.textContent = `Usage: ${usage.toFixed(1)}%`;
+                detailEl.classList.remove('hidden');
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.cpu?.error || 'CPU metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('cpu-sparkline', history, '#2563eb', '#2563eb');
+            break;
+        }
+        case 'memory': {
+            const usage = data.memory?.usage;
+            const total = data.memory?.total;
+            const available = data.memory?.available;
+            const history = data.memory?.history || [];
+            const valEl = document.getElementById('mem-usage-value');
+            const barEl = document.getElementById('mem-usage-bar');
+            const detailEl = document.getElementById('mem-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                if (total !== null && total !== undefined && available !== null && available !== undefined) {
+                    detailEl.textContent = `${formatBytesShort(total - available)} / ${formatBytesShort(total)}`;
+                    detailEl.classList.remove('hidden');
+                }
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.memory?.error || 'Memory metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('mem-sparkline', history, '#16a34a', '#16a34a');
+            break;
+        }
+        case 'disk': {
+            const usage = data.disk?.usage;
+            const total = data.disk?.total;
+            const free = data.disk?.free;
+            const history = data.disk?.history || [];
+            const valEl = document.getElementById('disk-usage-value');
+            const barEl = document.getElementById('disk-usage-bar');
+            const detailEl = document.getElementById('disk-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                if (total && free !== undefined) {
+                    detailEl.textContent = `${formatBytesShort(total - free)} / ${formatBytesShort(total)}`;
+                    detailEl.classList.remove('hidden');
+                }
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.disk?.error || 'Disk metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('disk-sparkline', history, '#ca8a04', '#ca8a04');
+            break;
+        }
+        case 'network': {
+            const rxRate = data.network?.rx_rate;
+            const txRate = data.network?.tx_rate;
+            const rxHistory = data.network?.rx_history || [];
+            const txHistory = data.network?.tx_history || [];
+            const valEl = document.getElementById('net-usage-value');
+            const rxEl = document.getElementById('net-rx-value');
+            const txEl = document.getElementById('net-tx-value');
+            const detailEl = document.getElementById('net-usage-detail');
+
+            if (rxRate !== null && rxRate !== undefined && txRate !== null && txRate !== undefined) {
+                rxEl.textContent = formatBytesPerSec(rxRate);
+                txEl.textContent = formatBytesPerSec(txRate);
+                valEl.textContent = `${formatBytesPerSec(rxRate)} ↓ / ${formatBytesPerSec(txRate)} ↑`;
+                detailEl.textContent = `RX: ${formatBytesPerSec(rxRate)} / TX: ${formatBytesPerSec(txRate)}`;
+                detailEl.classList.remove('hidden');
+            } else {
+                rxEl.textContent = '--';
+                txEl.textContent = '--';
+                valEl.textContent = '--';
+                detailEl.textContent = data.network?.error || 'Network metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            // Combine RX and TX for sparkline (show both as separate lines)
+            renderNetworkSparkline('net-sparkline', rxHistory, txHistory);
+            break;
+        }
+    }
+}
+
+function renderNetworkSparkline(svgId, rxData, txData) {
+    const svg = document.getElementById(svgId);
+    if (!svg) return;
+
+    const width = svg.clientWidth || 200;
+    const height = 96;
+    const padding = 2;
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+
+    const allData = [...rxData, ...txData];
+    if (allData.length === 0) {
+        svg.innerHTML = '';
+        return;
+    }
+
+    const maxVal = Math.max(...allData, 1);
+    const minVal = Math.min(...allData, 0);
+    const range = maxVal - minVal || 1;
+
+    const renderLine = (data, color, fillColor, isRx) => {
+        if (data.length === 0) return '';
+        const points = data.map((val, i) => {
+            const x = padding + (i / Math.max(data.length - 1, 1)) * usableWidth;
+            const y = padding + usableHeight - ((val - minVal) / range) * usableHeight;
+            return `${x},${y}`;
+        });
+        const pathData = `M${points.join(' L')}`;
+        const fillPathData = `${pathData} L${width - padding},${height - padding} L${padding},${height - padding} Z`;
+        return `
+            <defs>
+                <linearGradient id="sparkline-gradient-${svgId}-${isRx ? 'rx' : 'tx'}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.15"/>
+                    <stop offset="100%" stop-color="${fillColor}" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <path d="${fillPathData}" fill="url(#sparkline-gradient-${svgId}-${isRx ? 'rx' : 'tx'})" />
+            <path d="${pathData}" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${isRx ? 'none' : '4,3'}" />
+        `;
+    };
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.innerHTML = `
+        ${renderLine(rxData, '#2563eb', '#2563eb', true)}
+        ${renderLine(txData, '#9333ea', '#9333ea', false)}
+    `;
+}
+
+function showSystemMonitorLoading() {
+    document.getElementById('system-monitor-status').textContent = 'Loading...';
+    document.getElementById('system-monitor-status').classList.remove('hidden');
+    document.getElementById('system-monitor-updated').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.add('opacity-50', 'pointer-events-none');
+    document.getElementById('system-monitor-unavailable').classList.add('hidden');
+}
+
+function showSystemMonitorError(error) {
+    document.getElementById('system-monitor-status').classList.add('hidden');
+    document.getElementById('system-monitor-updated').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.add('hidden');
+    document.getElementById('system-monitor-unavailable').classList.remove('hidden');
+    document.getElementById('system-monitor-error').textContent = error || 'Unable to connect to Node Exporter';
+}
+
+function showSystemMonitorSuccess(data) {
+    document.getElementById('system-monitor-status').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.remove('opacity-50', 'pointer-events-none', 'hidden');
+    document.getElementById('system-monitor-unavailable').classList.add('hidden');
+
+    const updatedEl = document.getElementById('system-monitor-updated');
+    if (data.last_update) {
+        const date = new Date(data.last_update * 1000);
+        updatedEl.textContent = `Updated: ${date.toLocaleTimeString()}`;
+        updatedEl.classList.remove('hidden');
+    }
+
+    updateMetricCard('cpu', data);
+    updateMetricCard('memory', data);
+    updateMetricCard('disk', data);
+    updateMetricCard('network', data);
+}
+
+async function fetchSystemMetrics() {
+    showSystemMonitorLoading();
+    try {
+        const res = await fetchAPI('/system/metrics');
+        if (res.success) {
+            const data = res.data;
+            if (data.available === false) {
+                showSystemMonitorError(data.error || 'Node Exporter unavailable');
+            } else {
+                showSystemMonitorSuccess(data);
+            }
+        } else {
+            showSystemMonitorError(res.message || 'Failed to fetch system metrics');
+        }
+    } catch (e) {
+        showSystemMonitorError(e.message);
+    }
+}
+
 // --- Sidebar Functions ---
 
 function initSidebar() {
@@ -273,6 +535,9 @@ function formatUptimeFromStart(started) {
 async function loadDashboard() {
     let anySuccess = false;
 
+    // 0. System Monitor (host metrics from Node Exporter)
+    fetchSystemMetrics();
+    
     // 1. Streams summary (Total/Online/Offline streams, viewers, traffic)
     try {
         const summary = await fetchAPI('/streams/summary');
