@@ -542,6 +542,7 @@ function bindPageEvents(page) {
         document.getElementById('config-paths-add-btn')?.addEventListener('click', () => openConfigPathModal());
         document.getElementById('config-paths-search')?.addEventListener('input', () => renderConfigPaths(allConfigPaths));
         document.getElementById('config-paths-refresh')?.addEventListener('click', loadConfigPaths);
+        document.getElementById('config-paths-export-btn')?.addEventListener('click', exportConfigPaths);
         initAmsImport();
     }
 }
@@ -2049,6 +2050,38 @@ function renderConfigPaths(paths) {
             </tr>
         `;
     }).join('');
+}
+
+function exportConfigPaths() {
+    const exportData = allConfigPaths.map(path => {
+        let type = 'Publisher';
+        let source = '(publisher)';
+        if (path.source_redirect) {
+            type = 'Redirect';
+            source = path.source_redirect;
+        } else if (path.source) {
+            type = 'URL Source';
+            source = path.source;
+        }
+
+        return {
+            name: path.name,
+            type,
+            source,
+            fallback: path.fallback || null,
+            on_demand: Boolean(path.source_on_demand),
+            max_readers: path.max_readers ?? null,
+        };
+    });
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `path-configurations-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
 }
 
 window.editConfigPath = function(name) {
