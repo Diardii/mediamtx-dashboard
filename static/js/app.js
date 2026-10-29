@@ -404,7 +404,7 @@ function initSidebar() {
 
 const pageTitleMap = {
     'dashboard': 'Dashboard',
-    'paths': 'Paths',
+    'streams': 'Streams',
     'config-global': 'Configuration - Global',
     'config-paths': 'Configuration - Paths',
     'config-defaults': 'Configuration - Path Defaults',
@@ -430,7 +430,7 @@ function getPathNameFromHash() {
 }
 
 async function navigateToPage(page, pathName = null) {
-    const knownPages = ['dashboard', 'paths', 'path-detail', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs', 'config-paths'];
+    const knownPages = ['dashboard', 'streams', 'path-detail', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs', 'config-paths'];
     const template = knownPages.includes(page) ? page : 'placeholder';
     const content = document.getElementById('page-content');
 
@@ -461,14 +461,14 @@ async function navigateToPage(page, pathName = null) {
         document.querySelectorAll('.nav-link').forEach(link => {
             link.classList.toggle(
                 'nav-active',
-                link.dataset.page === page || (page === 'path-detail' && link.dataset.page === 'paths'),
+                link.dataset.page === page || (page === 'path-detail' && link.dataset.page === 'streams'),
             );
         });
         currentPathName = page === 'path-detail' ? pathName : null;
         document.getElementById('page-title').textContent = page === 'path-detail'
             ? (pathName || 'Path Detail')
             : pageTitleMap[page] || 'Dashboard';
-        
+
         currentPage = page;
         await loadPageData(page);
     } catch (error) {
@@ -478,11 +478,11 @@ async function navigateToPage(page, pathName = null) {
 }
 
 function bindPageEvents(page) {
-    if (page === 'paths') {
-        document.getElementById('paths-search')?.addEventListener('input', () => {
-            renderPaths(allPaths);
+    if (page === 'streams') {
+        document.getElementById('active-paths')?.addEventListener('change', () => {
+            renderStreams(allPaths);
         });
-        document.getElementById('paths-table-body')?.addEventListener('click', event => {
+        document.getElementById('streams-table-body')?.addEventListener('click', event => {
             const button = event.target.closest?.('button[data-path-action]');
             if (!button) return;
             const name = button.dataset.pathName;
@@ -562,8 +562,8 @@ async function loadPageData(page) {
         case 'dashboard':
             await loadDashboard();
             break;
-        case 'paths':
-            await loadPaths();
+        case 'streams':
+            await loadStreams();
             break;
         case 'path-detail':
             await loadPathDetail(currentPathName);
@@ -608,7 +608,7 @@ async function loadDashboard() {
 
     // 0. System Monitor (host metrics from Node Exporter)
     fetchSystemMetrics();
-    
+
     // 1. Streams summary (Total/Online/Offline streams, viewers, traffic)
     try {
         const summary = await fetchAPI('/streams/summary');
@@ -623,20 +623,7 @@ async function loadDashboard() {
         renderSummaryError();
     }
 
-    // 2. Streams list (table)
-    try {
-        const streams = await fetchAPI('/streams');
-        if (streams.success) {
-            renderStreams(streams.data.items);
-        } else {
-            renderStreamsError();
-        }
-    } catch (e) {
-        showError('streams: ' + e.message);
-        renderStreamsError();
-    }
-
-    // 3. Sessions from all protocols (table)
+    // 2. Sessions from all protocols (table)
     try {
         const sessions = await fetchAPI('/sessions');
         if (sessions.success) {
@@ -649,7 +636,7 @@ async function loadDashboard() {
         renderSessionsError();
     }
 
-    // 4. Server health (version, connection status, uptime from started)
+    // 3. Server health (version, connection status, uptime from started)
     try {
         const health = await fetchAPI('/server/health');
         if (health.success) {
@@ -662,7 +649,7 @@ async function loadDashboard() {
         renderServerStatusError();
     }
 
-    // 5. Total Paths from config paths endpoint
+    // 4. Total Paths from config paths endpoint
     try {
         const paths = await fetchAPI('/paths');
         if (paths.success) {
@@ -676,7 +663,7 @@ async function loadDashboard() {
         document.getElementById('server-total-paths').textContent = '-';
     }
 
-    // 6. Active paths and total readers already rendered by summary
+    // 5. Active paths and total readers already rendered by summary
     // (server-active-paths, server-total-readers, server-traffic)
 
     setConnectionStatus(anySuccess);
@@ -741,24 +728,36 @@ function renderServerStatus(health) {
 function renderStreams(streams) {
     const tbody = document.getElementById('streams-table-body');
     const countEl = document.getElementById('streams-count');
+    const activepaths = document.getElementById('active-paths');
+    const onlyActive = activepaths ? activepaths.checked : false;
 
-    countEl.textContent = `${streams.length} stream${streams.length !== 1 ? 's' : ''}`;
+    const filteredStreams = streams.filter(s => {
+        if (onlyActive) {
+            return s.ready === true;
+        }
+        return true;
+    });
 
-    if (streams.length === 0) {
+    if (filteredStreams.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No active streams</td></tr>';
+        if (countEl) countEl.textContent = '0 streams';
         return;
     }
 
-    tbody.innerHTML = streams.map(s => {
+    let active = 0;
+
+    tbody.innerHTML = filteredStreams.map(s => {
       const tracks = Array.isArray(s.tracks) ? s.tracks : [];
       const trackInfo = tracks.length > 0 ? tracks.join(', ') : '-';
+      const status = s.ready ? 'Online' : 'Offline';
+      if (s.ready) active++;
 
         return `
             <tr class="hover:bg-gray-50">
                 <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
                 <td class="px-6 py-4">
                     <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
-                        ${s.ready ? 'Online' : 'Offline'}
+                        ${status}
                     </span>
                 </td>
                 <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
@@ -767,9 +766,13 @@ function renderStreams(streams) {
                 <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
                 <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
                 <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
+                <td class="px-6 py-4 text-sm">
+                    <button class="btn-icon btn-primary" data-path-action="detail" data-path-name="${escapeHtml(s.name)}">Detail</button>
+                </td>
             </tr>
         `;
     }).join('');
+    countEl.textContent = `${active} stream${active !== 1 ? 's' : ''}`;
 }
 
 function renderDashboardSessions(sessions) {
@@ -824,58 +827,18 @@ function renderServerConfig(config) {
 
 let allPaths = [];
 
-async function loadPaths() {
-    try {
-        const paths = await fetchAPI('/streams');
-        if (paths.success) {
-            allPaths = paths.data.items || [];
-            renderPaths(allPaths);
-        }
-        setConnectionStatus(true);
-    } catch (e) {
-        showError(e.message);
-        setConnectionStatus(false);
+async function loadStreams() {
+      try {
+          const paths = await fetchAPI('/streams');
+          if (paths.success) {
+              allPaths = paths.data.items || [];
+              renderStreams(allPaths);
+          }
+          setConnectionStatus(true);
+      } catch (e) {
+          showError(e.message);
+          setConnectionStatus(false);
     }
-}
-
-function renderPaths(paths) {
-    const tbody = document.getElementById('paths-table-body');
-    const searchTerm = document.getElementById('paths-search')?.value.toLowerCase() || '';
-
-    const filtered = paths.filter(p => {
-        const searchableValues = [
-            p.name,
-            p.confName,
-            p.source?.type,
-            p.source?.id,
-        ];
-        return searchableValues.some(value =>
-            typeof value === 'string' && value.toLowerCase().includes(searchTerm)
-        );
-    });
-
-    if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = filtered.map(p => `
-        <tr class="hover:bg-gray-50">
-            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
-            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(p.source?.type || '-')}</td>
-            <td class="px-6 py-4 text-sm">
-                <span class="status-badge ${p.online ? 'status-online' : 'status-offline'}">
-                    ${p.online ? 'Online' : 'Offline'}
-                </span>
-            </td>
-            <td class="px-6 py-4 text-sm">${formatNumber(Array.isArray(p.readers) ? p.readers.length : 0)}</td>
-            <td class="px-6 py-4">
-                <button data-path-action="detail" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-primary mr-2">Detail</button>
-                <button data-path-action="edit" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-primary mr-2">Edit</button>
-                <button data-path-action="delete" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-danger">Delete</button>
-            </td>
-        </tr>
-    `).join('');
 }
 
 // --- Path Detail ---
@@ -1306,7 +1269,7 @@ async function deleteCurrentPath() {
     try {
         const response = await fetchAPI(`/paths/${encodeURIComponent(pathDetailState.name)}`, { method: 'DELETE' });
         if (!response.success) throw new Error(response.message || 'MediaMTX did not confirm path deletion');
-        window.location.hash = '#paths';
+        window.location.hash = '#streams';
     } catch (error) {
         showPathNotice(`Failed to delete path: ${error.message}`, 'warning');
     }
@@ -1454,7 +1417,7 @@ function initAmsImport() {
             const data = result.data;
             const failures = data.failed ? ` ${data.failed} failed: ${data.errors.join('; ')}` : '';
             alert(`${data.imported} of ${data.total} stream(s) imported.${failures}`);
-            await loadPaths();
+            await loadConfigPaths();
         } catch (e) {
             alert(`Unable to import AMS export: ${e.message}`);
         } finally {
@@ -1870,7 +1833,7 @@ window.deletePath = async function(name) {
     if (!confirm(`Delete path "${name}"?`)) return;
     try {
         await fetchAPI(`/paths/${encodeURIComponent(name)}`, { method: 'DELETE' });
-        loadPaths();
+        loadConfigPaths(currentPage);
     } catch (e) {
         showError(e.message);
         alert(`Failed to delete: ${e.message}`);
@@ -1983,8 +1946,8 @@ form?.addEventListener('submit', async (e) => {
         }
         modal.classList.add('hidden');
         modal.classList.remove('flex');
-        if (currentPage === 'paths') {
-            await loadPaths();
+        if (currentPage === 'streams') {
+            await loadStreams();
         } else if (currentPage === 'config-paths') {
             loadConfigPaths();
         } else if (currentPage === 'path-detail') {
@@ -2610,7 +2573,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const initialPage = getPageFromHash();
     currentRoute = window.location.hash;
     navigateToPage(initialPage, getPathNameFromHash());
-    
+
     startAutoRefresh();
 });
 
