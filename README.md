@@ -38,6 +38,22 @@ Lalu buka **http://localhost:8000/docs**: semua endpoint bisa dicoba langsung da
 
 Pastikan `mediamtx.exe` sedang berjalan dengan `api: yes`. Kalau ingin mencoba tanpa MediaMTX, ubah `USE_MOCK=true` di `.env`.
 
+## Mode Docker Compose
+
+File default `docker-compose.yml` memakai bridge network. Dashboard mengakses MediaMTX melalui `http://mediamtx:9997` dan tersedia pada port 8000:
+
+```sh
+docker compose up -d
+```
+
+Untuk membaca metrik sistem host, gunakan konfigurasi host network:
+
+```sh
+docker compose -f docker-compose.host.yml up -d
+```
+
+Mode host menjalankan dashboard dan Node Exporter di host network. Mode ini memakai `127.0.0.1:9997` untuk MediaMTX dan `127.0.0.1:9100` untuk Node Exporter. Untuk kembali ke bridge mode, jalankan `docker compose up -d --remove-orphans`.
+
 ## Endpoint
 
 | Method | URL | Fungsi |

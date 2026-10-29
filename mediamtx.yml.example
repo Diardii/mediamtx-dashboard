@@ -9,11 +9,11 @@
 # Verbosity of the program; available values are "error", "warn", "info", "debug".
 logLevel: info
 # Destinations of log messages; available values are "stdout", "file" and "syslog".
-logDestinations: [stdout]
+logDestinations: [stdout, file]
 # When destination is "stdout" or "file", emit logs in structured format (JSONL).
-logStructured: no
+logStructured: yes
 # When "file" is in logDestinations, this is the file which will receive logs.
-logFile: mediamtx.log
+logFile: /var/log/mediamtx/mediamtx.log
 # When "syslog" is in logDestinations, use prefix for logs.
 sysLogPrefix: mediamtx
 

@@ -22,7 +22,16 @@ function formatNumber(num) {
     return num.toLocaleString();
 }
 
+function getUptimeSeconds(startedString) {
+    if (!startedString) return 0;
+    const startTime = new Date(startedString).getTime(); // Ubah ke milidetik
+    const now = Date.getTime ? Date.now() : new Date().getTime(); // Waktu sekarang
+    const diffSeconds = Math.floor((now - startTime) / 1000); // Konversi ke detik
+    return diffSeconds > 0 ? diffSeconds : 0;
+}
+
 function formatUptime(seconds) {
+    seconds = getUptimeSeconds(seconds);
     if (!seconds) return '-';
     const d = Math.floor(seconds / 86400);
     const h = Math.floor((seconds % 86400) / 3600);
@@ -73,6 +82,268 @@ function containsMaskedCredentials(value) {
         value.includes(':***@') ||
         /(?:token|password|passwd|secret|authorization|auth|api[_-]?key)=[^&]*(?:%2A|\*){3}/i.test(value)
     );
+}
+
+// --- System Monitor Utilities ---
+
+function formatBytesPerSec(bytes) {
+    if (bytes === 0 || bytes === null || bytes === undefined) return '0 B/s';
+    const k = 1024;
+    const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatBytesShort(bytes) {
+    if (bytes === 0 || bytes === null || bytes === undefined) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function renderSparkline(svgId, data, color, fillColor) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !data || data.length === 0) return;
+
+    const width = svg.clientWidth || 200;
+    const height = 96; // 24 * 4
+    const padding = 2;
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+
+    // Normalize data to 0-1 range
+    const maxVal = Math.max(...data, 1);
+    const minVal = Math.min(...data, 0);
+    const range = maxVal - minVal || 1;
+
+    const points = data.map((val, i) => {
+        const x = padding + (i / Math.max(data.length - 1, 1)) * usableWidth;
+        const y = padding + usableHeight - ((val - minVal) / range) * usableHeight;
+        return `${x},${y}`;
+    });
+
+    const pathData = `M${points.join(' L')}`;
+    const fillPathData = `${pathData} L${width - padding},${height - padding} L${padding},${height - padding} Z`;
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.innerHTML = `
+        <defs>
+            <linearGradient id="sparkline-gradient-${svgId}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="${fillColor}" stop-opacity="0"/>
+            </linearGradient>
+        </defs>
+        <path d="${fillPathData}" fill="url(#sparkline-gradient-${svgId})" />
+        <path d="${pathData}" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    `;
+}
+
+function updateMetricCard(metric, data) {
+    switch (metric) {
+        case 'cpu': {
+            const usage = data.cpu?.usage;
+            const history = data.cpu?.history || [];
+            const valEl = document.getElementById('cpu-usage-value');
+            const barEl = document.getElementById('cpu-usage-bar');
+            const detailEl = document.getElementById('cpu-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                detailEl.textContent = `Usage: ${usage.toFixed(1)}%`;
+                detailEl.classList.remove('hidden');
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.cpu?.error || 'CPU metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('cpu-sparkline', history, '#2563eb', '#2563eb');
+            break;
+        }
+        case 'memory': {
+            const usage = data.memory?.usage;
+            const total = data.memory?.total;
+            const available = data.memory?.available;
+            const history = data.memory?.history || [];
+            const valEl = document.getElementById('mem-usage-value');
+            const barEl = document.getElementById('mem-usage-bar');
+            const detailEl = document.getElementById('mem-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                if (total !== null && total !== undefined && available !== null && available !== undefined) {
+                    detailEl.textContent = `${formatBytesShort(total - available)} / ${formatBytesShort(total)}`;
+                    detailEl.classList.remove('hidden');
+                }
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.memory?.error || 'Memory metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('mem-sparkline', history, '#16a34a', '#16a34a');
+            break;
+        }
+        case 'disk': {
+            const usage = data.disk?.usage;
+            const total = data.disk?.total;
+            const free = data.disk?.free;
+            const history = data.disk?.history || [];
+            const valEl = document.getElementById('disk-usage-value');
+            const barEl = document.getElementById('disk-usage-bar');
+            const detailEl = document.getElementById('disk-usage-detail');
+
+            if (usage !== null && usage !== undefined) {
+                valEl.textContent = `${usage.toFixed(1)}%`;
+                barEl.style.width = `${Math.min(100, Math.max(0, usage))}%`;
+                barEl.parentElement.setAttribute('aria-valuenow', Math.round(usage));
+                if (total && free !== undefined) {
+                    detailEl.textContent = `${formatBytesShort(total - free)} / ${formatBytesShort(total)}`;
+                    detailEl.classList.remove('hidden');
+                }
+            } else {
+                valEl.textContent = '--%';
+                barEl.style.width = '0%';
+                detailEl.textContent = data.disk?.error || 'Disk metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            renderSparkline('disk-sparkline', history, '#ca8a04', '#ca8a04');
+            break;
+        }
+        case 'network': {
+            const rxRate = data.network?.rx_rate;
+            const txRate = data.network?.tx_rate;
+            const rxHistory = data.network?.rx_history || [];
+            const txHistory = data.network?.tx_history || [];
+            const valEl = document.getElementById('net-usage-value');
+            const rxEl = document.getElementById('net-rx-value');
+            const txEl = document.getElementById('net-tx-value');
+            const detailEl = document.getElementById('net-usage-detail');
+
+            if (rxRate !== null && rxRate !== undefined && txRate !== null && txRate !== undefined) {
+                rxEl.textContent = formatBytesPerSec(rxRate);
+                txEl.textContent = formatBytesPerSec(txRate);
+                valEl.textContent = `${formatBytesPerSec(rxRate)} ↓ / ${formatBytesPerSec(txRate)} ↑`;
+                detailEl.textContent = `RX: ${formatBytesPerSec(rxRate)} / TX: ${formatBytesPerSec(txRate)}`;
+                detailEl.classList.remove('hidden');
+            } else {
+                rxEl.textContent = '--';
+                txEl.textContent = '--';
+                valEl.textContent = '--';
+                detailEl.textContent = data.network?.error || 'Network metrics unavailable';
+                detailEl.classList.remove('hidden');
+            }
+            // Combine RX and TX for sparkline (show both as separate lines)
+            renderNetworkSparkline('net-sparkline', rxHistory, txHistory);
+            break;
+        }
+    }
+}
+
+function renderNetworkSparkline(svgId, rxData, txData) {
+    const svg = document.getElementById(svgId);
+    if (!svg) return;
+
+    const width = svg.clientWidth || 200;
+    const height = 96;
+    const padding = 2;
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+
+    const allData = [...rxData, ...txData];
+    if (allData.length === 0) {
+        svg.innerHTML = '';
+        return;
+    }
+
+    const maxVal = Math.max(...allData, 1);
+    const minVal = Math.min(...allData, 0);
+    const range = maxVal - minVal || 1;
+
+    const renderLine = (data, color, fillColor, isRx) => {
+        if (data.length === 0) return '';
+        const points = data.map((val, i) => {
+            const x = padding + (i / Math.max(data.length - 1, 1)) * usableWidth;
+            const y = padding + usableHeight - ((val - minVal) / range) * usableHeight;
+            return `${x},${y}`;
+        });
+        const pathData = `M${points.join(' L')}`;
+        const fillPathData = `${pathData} L${width - padding},${height - padding} L${padding},${height - padding} Z`;
+        return `
+            <defs>
+                <linearGradient id="sparkline-gradient-${svgId}-${isRx ? 'rx' : 'tx'}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.15"/>
+                    <stop offset="100%" stop-color="${fillColor}" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+            <path d="${fillPathData}" fill="url(#sparkline-gradient-${svgId}-${isRx ? 'rx' : 'tx'})" />
+            <path d="${pathData}" stroke="${color}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${isRx ? 'none' : '4,3'}" />
+        `;
+    };
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.innerHTML = `
+        ${renderLine(rxData, '#2563eb', '#2563eb', true)}
+        ${renderLine(txData, '#9333ea', '#9333ea', false)}
+    `;
+}
+
+function showSystemMonitorLoading() {
+    document.getElementById('system-monitor-status').textContent = 'Loading...';
+    document.getElementById('system-monitor-status').classList.remove('hidden');
+    document.getElementById('system-monitor-updated').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.add('opacity-50', 'pointer-events-none');
+    document.getElementById('system-monitor-unavailable').classList.add('hidden');
+}
+
+function showSystemMonitorError(error) {
+    document.getElementById('system-monitor-status').classList.add('hidden');
+    document.getElementById('system-monitor-updated').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.add('hidden');
+    document.getElementById('system-monitor-unavailable').classList.remove('hidden');
+    document.getElementById('system-monitor-error').textContent = error || 'Unable to connect to Node Exporter';
+}
+
+function showSystemMonitorSuccess(data) {
+    document.getElementById('system-monitor-status').classList.add('hidden');
+    document.getElementById('system-monitor-grid').classList.remove('opacity-50', 'pointer-events-none', 'hidden');
+    document.getElementById('system-monitor-unavailable').classList.add('hidden');
+
+    const updatedEl = document.getElementById('system-monitor-updated');
+    if (data.last_update) {
+        const date = new Date(data.last_update * 1000);
+        updatedEl.textContent = `Updated: ${date.toLocaleTimeString()}`;
+        updatedEl.classList.remove('hidden');
+    }
+
+    updateMetricCard('cpu', data);
+    updateMetricCard('memory', data);
+    updateMetricCard('disk', data);
+    updateMetricCard('network', data);
+}
+
+async function fetchSystemMetrics() {
+    showSystemMonitorLoading();
+    try {
+        const res = await fetchAPI('/system/metrics');
+        if (res.success) {
+            const data = res.data;
+            if (data.available === false) {
+                showSystemMonitorError(data.error || 'Node Exporter unavailable');
+            } else {
+                showSystemMonitorSuccess(data);
+            }
+        } else {
+            showSystemMonitorError(res.message || 'Failed to fetch system metrics');
+        }
+    } catch (e) {
+        showSystemMonitorError(e.message);
+    }
 }
 
 // --- Sidebar Functions ---
@@ -176,16 +447,16 @@ async function navigateToPage(page, pathName = null) {
     try {
         const response = await fetch(`/static/pages/${template}.html`);
         if (!response.ok) throw new Error(`Unable to load ${template} page`);
-        
+
         content.innerHTML = await response.text();
-        
+
         if (template === 'placeholder') {
             document.getElementById('placeholder-title').textContent = pageTitleMap[page] || page;
         }
 
         // Re-bind events for the newly loaded content
         bindPageEvents(page);
-        
+
         // Update UI state
         document.querySelectorAll('.nav-link').forEach(link => {
             link.classList.toggle(
@@ -271,6 +542,7 @@ function bindPageEvents(page) {
         document.getElementById('config-paths-add-btn')?.addEventListener('click', () => openConfigPathModal());
         document.getElementById('config-paths-search')?.addEventListener('input', () => renderConfigPaths(allConfigPaths));
         document.getElementById('config-paths-refresh')?.addEventListener('click', loadConfigPaths);
+        initAmsImport();
     }
 }
 
@@ -332,6 +604,9 @@ function formatUptimeFromStart(started) {
 
 async function loadDashboard() {
     let anySuccess = false;
+
+    // 0. System Monitor (host metrics from Node Exporter)
+    fetchSystemMetrics();
     
     // 1. Streams summary (Total/Online/Offline streams, viewers, traffic)
     try {
@@ -364,7 +639,7 @@ async function loadDashboard() {
     try {
         const sessions = await fetchAPI('/sessions');
         if (sessions.success) {
-            renderSessions(sessions.data.items);
+            renderDashboardSessions(sessions.data.items);
         } else {
             renderSessionsError();
         }
@@ -402,7 +677,7 @@ async function loadDashboard() {
 
     // 6. Active paths and total readers already rendered by summary
     // (server-active-paths, server-total-readers, server-traffic)
-    
+
     setConnectionStatus(anySuccess);
 }
 
@@ -411,9 +686,9 @@ function renderSummary(data) {
     document.getElementById('stat-online').textContent = formatNumber(data.online);
     document.getElementById('stat-offline').textContent = formatNumber(data.offline);
     document.getElementById('stat-viewers').textContent = formatNumber(data.total_readers);
-    
+
     // Update server traffic in the status card
-    document.getElementById('server-traffic').textContent = 
+    document.getElementById('server-traffic').textContent =
         `${formatBytes(data.total_bytes_received)} / ${formatBytes(data.total_bytes_sent)}`;
     document.getElementById('server-total-readers').textContent = formatNumber(data.total_readers);
     document.getElementById('server-active-paths').textContent = formatNumber(data.online);
@@ -456,7 +731,7 @@ function renderServerStatus(health) {
     const statusEl = document.getElementById('server-connection-status');
     statusEl.textContent = connected ? 'Connected' : 'Disconnected';
     statusEl.className = `px-3 py-1 text-sm rounded-lg ${connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
-    
+
     document.getElementById('server-version').textContent = health.version || 'unknown';
     // Use 'started' field from MediaMTX /info endpoint to calculate uptime
     document.getElementById('server-uptime').textContent = formatUptimeFromStart(health.started);
@@ -465,38 +740,43 @@ function renderServerStatus(health) {
 function renderStreams(streams) {
     const tbody = document.getElementById('streams-table-body');
     const countEl = document.getElementById('streams-count');
-    
+
     countEl.textContent = `${streams.length} stream${streams.length !== 1 ? 's' : ''}`;
-    
+
     if (streams.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No active streams</td></tr>';
         return;
     }
 
-    tbody.innerHTML = streams.map(s => `
-        <tr class="hover:bg-gray-50">
-            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
-            <td class="px-6 py-4">
-                <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
-                    ${s.ready ? 'Online' : 'Offline'}
-                </span>
-            </td>
-            <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">
-                ${s.tracks.map(t => `${t.codec}${t.width ? ` ${t.width}x${t.height}` : ''}${t.fps ? `@${t.fps}fps` : ''}`).join(', ') || '-'}
-            </td>
-            <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
-            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
-            <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = streams.map(s => {
+      const tracks = Array.isArray(s.tracks) ? s.tracks : [];
+      const trackInfo = tracks.length > 0 ? tracks.join(', ') : '-';
+
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
+                <td class="px-6 py-4">
+                    <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
+                        ${s.ready ? 'Online' : 'Offline'}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
+                    ${escapeHtml(trackInfo)}
+                </td>
+                <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
+                <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
+                <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
-function renderSessions(sessions) {
+function renderDashboardSessions(sessions) {
     const tbody = document.getElementById('sessions-table-body');
     const countEl = document.getElementById('sessions-count');
-    
+
     countEl.textContent = `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
-    
+
     if (sessions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-gray-500">No active sessions</td></tr>';
         return;
@@ -524,16 +804,16 @@ function renderServerStatus(health) {
     const statusEl = document.getElementById('server-connection-status');
     statusEl.textContent = connected ? 'Connected' : 'Disconnected';
     statusEl.className = `px-3 py-1 text-sm rounded-lg ${connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
-    
+
     document.getElementById('server-version').textContent = health.version || 'unknown';
-    document.getElementById('server-uptime').textContent = formatUptime(health.uptime);
+    document.getElementById('server-uptime').textContent = formatUptime(health.started);
 }
 
 function renderServerConfig(config) {
     // Extract path count from config if available
     const paths = config.paths || {};
     const pathCount = Object.keys(paths).length;
-    
+
     // We'll get active paths and readers from the streams summary instead
     // This is just for static config info
     document.getElementById('server-total-paths').textContent = pathCount;
@@ -560,7 +840,7 @@ async function loadPaths() {
 function renderPaths(paths) {
     const tbody = document.getElementById('paths-table-body');
     const searchTerm = document.getElementById('paths-search')?.value.toLowerCase() || '';
-    
+
     const filtered = paths.filter(p => {
         const searchableValues = [
             p.name,
@@ -572,7 +852,7 @@ function renderPaths(paths) {
             typeof value === 'string' && value.toLowerCase().includes(searchTerm)
         );
     });
-    
+
     if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
         return;
@@ -1040,22 +1320,22 @@ function openPathModal(path = null) {
     const form = document.getElementById('add-path-form');
     const title = document.getElementById('path-modal-title');
     const submitBtn = document.getElementById('path-submit-btn');
-    
+
     form.reset();
     editingPathName = null;
-    
+
     // Reset field visibility
     updateSourceTypeFields('publisher');
-    
+
     if (path) {
         title.textContent = 'Edit Path';
         submitBtn.textContent = 'Save Changes';
         editingPathName = path.name;
-        
+
         const nameInput = document.querySelector('input[name="name"]');
         nameInput.value = path.name;
         nameInput.disabled = true;
-        
+
         // Determine source type from existing path data
         let sourceType = 'publisher';
         if (path.source_redirect) {
@@ -1063,10 +1343,10 @@ function openPathModal(path = null) {
         } else if (path.source) {
             sourceType = 'url';
         }
-        
+
         document.getElementById('path-source-type').value = sourceType;
         updateSourceTypeFields(sourceType);
-        
+
         // Fill in the fields
         if (path.source) {
             // Only fill source if it's not a masked password URL
@@ -1096,7 +1376,7 @@ function openPathModal(path = null) {
         submitBtn.textContent = 'Add Path';
         document.querySelector('input[name="name"]').disabled = false;
     }
-    
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 }
@@ -1108,28 +1388,28 @@ function updateSourceTypeFields(sourceType) {
     const onDemandTimeoutField = document.getElementById('on-demand-timeout-field');
     const onDemandCloseField = document.getElementById('on-demand-close-field');
     const sourceOnDemandCheckbox = document.getElementById('source_on_demand');
-    
+
     // Guard: elements may not exist if modal not yet rendered
     if (!sourceUrlField || !redirectTargetField || !onDemandFieldset || !sourceOnDemandCheckbox) {
         return;
     }
-    
+
     // Hide all conditional fields first
     sourceUrlField.classList.add('hidden');
     redirectTargetField.classList.add('hidden');
     onDemandFieldset.classList.add('hidden');
     if (onDemandTimeoutField) onDemandTimeoutField.classList.add('hidden');
     if (onDemandCloseField) onDemandCloseField.classList.add('hidden');
-    
+
     // Remove required attributes
     sourceUrlField.querySelector('input')?.removeAttribute('required');
     redirectTargetField.querySelector('input')?.removeAttribute('required');
-    
+
     if (sourceType === 'url') {
         sourceUrlField.classList.remove('hidden');
         sourceUrlField.querySelector('input')?.setAttribute('required', 'true');
         onDemandFieldset.classList.remove('hidden');
-        
+
         // Show/hide timeout fields based on checkbox
         if (sourceOnDemandCheckbox.checked) {
             if (onDemandTimeoutField) onDemandTimeoutField.classList.remove('hidden');
@@ -1143,16 +1423,57 @@ function updateSourceTypeFields(sourceType) {
 }
 
 // Event listeners for modal fields (initialized after DOM ready)
+function initAmsImport() {
+    const button = document.getElementById('import-ams-btn');
+    const fileInput = document.getElementById('import-ams-file');
+    if (!button || !fileInput) return;
+
+    button.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+        const [file] = fileInput.files;
+        if (!file) return;
+
+        try {
+            const payload = JSON.parse(await file.text());
+            if (!Array.isArray(payload.streams)) {
+                throw new Error('Invalid AMS export: "streams" must be an array');
+            }
+
+            const appName = payload.app || '(no group)';
+            if (!confirm(`Import ${payload.streams.length} stream(s) into group "${appName}"?`)) return;
+
+            button.disabled = true;
+            button.textContent = 'Importing...';
+            const result = await fetchAPI('/import/ams', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+
+            if (!result.success) throw new Error(result.message || 'Import failed');
+            const data = result.data;
+            const failures = data.failed ? ` ${data.failed} failed: ${data.errors.join('; ')}` : '';
+            alert(`${data.imported} of ${data.total} stream(s) imported.${failures}`);
+            await loadPaths();
+        } catch (e) {
+            alert(`Unable to import AMS export: ${e.message}`);
+        } finally {
+            button.disabled = false;
+            button.textContent = 'Import AMS';
+            fileInput.value = '';
+        }
+    });
+}
+
 function initPathModalEvents() {
     const sourceTypeSelect = document.getElementById('path-source-type');
     const sourceOnDemandCheckbox = document.getElementById('source_on_demand');
-    
+
     if (sourceTypeSelect) {
         sourceTypeSelect.addEventListener('change', (e) => {
             updateSourceTypeFields(e.target.value);
         });
     }
-    
+
     if (sourceOnDemandCheckbox) {
         sourceOnDemandCheckbox.addEventListener('change', (e) => {
             const onDemandTimeoutField = document.getElementById('on-demand-timeout-field');
@@ -1198,22 +1519,22 @@ function openConfigPathModal(path = null) {
     const form = document.getElementById('add-path-form');
     const title = document.getElementById('path-modal-title');
     const submitBtn = document.getElementById('path-submit-btn');
-    
+
     form.reset();
     editingConfigPathName = null;
-    
+
     // Reset field visibility
     updateSourceTypeFields('publisher');
-    
+
     if (path) {
         title.textContent = 'Edit Path Configuration';
         submitBtn.textContent = 'Save Changes';
         editingConfigPathName = path.name;
-        
+
         const nameInput = document.querySelector('input[name="name"]');
         nameInput.value = path.name;
         nameInput.disabled = true;
-        
+
         // Determine source type from existing path data
         let sourceType = 'publisher';
         if (path.source_redirect) {
@@ -1221,10 +1542,10 @@ function openConfigPathModal(path = null) {
         } else if (path.source) {
             sourceType = 'url';
         }
-        
+
         document.getElementById('path-source-type').value = sourceType;
         updateSourceTypeFields(sourceType);
-        
+
         // Fill in the fields
         if (path.source && !path.source.includes(':***@')) {
             document.querySelector('input[name="source"]').value = path.source;
@@ -1250,7 +1571,7 @@ function openConfigPathModal(path = null) {
         submitBtn.textContent = 'Add Path';
         document.querySelector('input[name="name"]').disabled = false;
     }
-    
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 }
@@ -1298,10 +1619,10 @@ async function loadConfigGlobal() {
         const res = await fetchAPI('/server/config');
         if (res.success) {
             originalConfig = res.data;
-            
+
             // Populate form fields
             populateConfigGlobalForm(res.data);
-            
+
             // Populate JSON editor
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
             document.getElementById('config-global-form-status').classList.add('hidden');
@@ -1318,7 +1639,7 @@ async function loadConfigGlobal() {
 function populateConfigGlobalForm(config) {
     const form = document.querySelector('#page-config-global');
     if (!form) return;
-    
+
     // Simple fields
     const simpleFields = [
         'logLevel', 'logFormat', 'readTimeout', 'writeTimeout', 'readHeaderTimeout',
@@ -1328,7 +1649,7 @@ function populateConfigGlobalForm(config) {
         'srtLatency', 'srtMaxBandwidth',
         'hlsAllowOrigin', 'hlsSegmentCount', 'hlsSegmentDuration', 'hlsPartDuration'
     ];
-    
+
     simpleFields.forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
         if (el) {
@@ -1344,7 +1665,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Multi-select fields
     ['logDestinations', 'rtspTransports'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -1357,7 +1678,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Nested API fields
     const apiFields = ['enabled', 'address', 'encryption', 'authentication', 'trustedProxies', 'corsOrigin'];
     apiFields.forEach(name => {
@@ -1377,7 +1698,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Metrics
     ['metrics.enabled', 'metrics.address', 'metrics.encryption'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -1388,7 +1709,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // PPROF
     ['pprof.enabled', 'pprof.address'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -1399,7 +1720,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // WebRTC encryption
     const webrtcEncEl = form.querySelector('[name="webrtcEncryption"]');
     if (webrtcEncEl) {
@@ -1408,7 +1729,7 @@ function populateConfigGlobalForm(config) {
             webrtcEncEl.value = value;
         }
     }
-    
+
     // SRT encryption
     const srtEncEl = form.querySelector('[name="srtEncryption"]');
     if (srtEncEl) {
@@ -1417,7 +1738,7 @@ function populateConfigGlobalForm(config) {
             srtEncEl.value = value;
         }
     }
-    
+
     // HLS encryption
     const hlsEncEl = form.querySelector('[name="hlsEncryption"]');
     if (hlsEncEl) {
@@ -1431,17 +1752,17 @@ function populateConfigGlobalForm(config) {
 function collectConfigGlobalForm() {
     const form = document.querySelector('#page-config-global');
     if (!form) return {};
-    
+
     const formData = new FormData(form);
     const updates = {};
-    
+
     for (const [name, value] of formData.entries()) {
         const parsed = parseFormValue(name, value);
         if (parsed !== null) {
             setNestedValue(updates, name, parsed);
         }
     }
-    
+
     // Handle multi-selects that FormData doesn't capture well
     ['logDestinations', 'rtspTransports'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -1452,7 +1773,7 @@ function collectConfigGlobalForm() {
             }
         }
     });
-    
+
     // Handle comma-separated fields
     ['api.trustedProxies', 'api.corsOrigin'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -1460,26 +1781,26 @@ function collectConfigGlobalForm() {
             setNestedValue(updates, name, el.value.split(',').map(s => s.trim()).filter(Boolean));
         }
     });
-    
+
     return updates;
 }
 
 async function saveConfigGlobalForm() {
     const statusEl = document.getElementById('config-global-form-status');
     const btn = document.getElementById('config-global-save-form');
-    
+
     btn.disabled = true;
     btn.textContent = 'Saving...';
-    
+
     try {
         const updates = collectConfigGlobalForm();
         const mergedConfig = { ...originalConfig, ...updates };
-        
+
         const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(mergedConfig),
         });
-        
+
         if (res.success) {
             originalConfig = res.data;
             populateConfigGlobalForm(res.data);
@@ -1503,17 +1824,17 @@ async function saveConfigGlobalJSON() {
     const editor = document.getElementById('config-global-editor');
     const statusEl = document.getElementById('config-global-json-status');
     const btn = document.getElementById('config-global-save-json');
-    
+
     btn.disabled = true;
     btn.textContent = 'Saving...';
-    
+
     try {
         const config = JSON.parse(editor.value);
         const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(config),
         });
-        
+
         if (res.success) {
             originalConfig = res.data;
             populateConfigGlobalForm(res.data);
@@ -1582,13 +1903,13 @@ form?.addEventListener('submit', async (e) => {
     const fd = new FormData(form);
     const name = fd.get('name');
     const sourceType = fd.get('source_type');
-    
+
     // Build payload based on source type
     const payload = {
         name,
         source_type: sourceType,
     };
-    
+
     if (sourceType === 'url') {
         const source = fd.get('source');
         if (!source) {
@@ -1612,7 +1933,7 @@ form?.addEventListener('submit', async (e) => {
         payload.source_redirect = redirectTarget;
     }
     // For publisher, no source needed
-    
+
     // Common optional fields
     const maxReaders = fd.get('max_readers');
     if (maxReaders !== '' && maxReaders !== null) {
@@ -1623,20 +1944,20 @@ form?.addEventListener('submit', async (e) => {
         }
         payload.max_readers = val;
     }
-    
+
     const fallback = fd.get('fallback');
     if (fallback) payload.fallback = fallback;
-    
+
     try {
         const isEditing = editingPathName || editingConfigPathName;
         const editingName = editingPathName || editingConfigPathName;
-        
+
         if (isEditing) {
             // Edit existing path - don't send name, and don't send source if it wasn't changed (to preserve masked passwords)
             const editPayload = { ...payload };
             delete editPayload.name;
             delete editPayload.source_type;
-            
+
             // If source is a masked password, don't send it
             if (containsMaskedCredentials(editPayload.source)) {
                 delete editPayload.source;
@@ -1647,7 +1968,7 @@ form?.addEventListener('submit', async (e) => {
             if (containsMaskedCredentials(editPayload.fallback)) {
                 delete editPayload.fallback;
             }
-            
+
             await fetchAPI(`/paths/${encodeURIComponent(editingName)}`, {
                 method: 'PATCH',
                 body: JSON.stringify(editPayload),
@@ -1702,14 +2023,14 @@ async function loadConfigPaths() {
 function renderConfigPaths(paths) {
     const tbody = document.getElementById('config-paths-table-body');
     const searchTerm = document.getElementById('config-paths-search')?.value.toLowerCase() || '';
-    
-    const filtered = paths.filter(p => 
-        p.name.toLowerCase().includes(searchTerm) || 
+
+    const filtered = paths.filter(p =>
+        p.name.toLowerCase().includes(searchTerm) ||
         (p.source && p.source.toLowerCase().includes(searchTerm)) ||
         (p.fallback && p.fallback.toLowerCase().includes(searchTerm)) ||
         (p.source_redirect && p.source_redirect.toLowerCase().includes(searchTerm))
     );
-    
+
     if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
         return;
@@ -1734,7 +2055,7 @@ function renderConfigPaths(paths) {
             sourceType = 'URL Source';
             sourceDisplay = p.source;
         }
-        
+
         const cellRenderers = {
             name: path => `<td class="px-6 py-4 font-mono text-sm">${escapeHtml(path.name)}</td>`,
             type: () => `
@@ -2120,10 +2441,10 @@ async function loadRuntimeHLS() {
             fetchAPI('/runtime/hls/connections'),
             fetchAPI('/runtime/hls/sessions'),
         ]);
-        
+
         if (connections.success) renderConnections('hls-connections-body', connections.data.items || []);
         if (sessions.success) renderSessions('hls-sessions-body', sessions.data.items || []);
-        
+
         setConnectionStatus(true);
     } catch (e) {
         showError(e.message);
@@ -2137,10 +2458,10 @@ async function loadRuntimeRTSP() {
             fetchAPI('/runtime/rtsp/connections'),
             fetchAPI('/runtime/rtsp/sessions'),
         ]);
-        
+
         if (connections.success) renderConnections('rtsp-connections-body', connections.data.items || []);
         if (sessions.success) renderSessions('rtsp-sessions-body', sessions.data.items || []);
-        
+
         setConnectionStatus(true);
     } catch (e) {
         showError(e.message);
@@ -2154,10 +2475,10 @@ async function loadRuntimeRTMP() {
             fetchAPI('/runtime/rtmp/connections'),
             fetchAPI('/runtime/rtmp/sessions'),
         ]);
-        
+
         if (connections.success) renderConnections('rtmp-connections-body', connections.data.items || []);
         if (sessions.success) renderSessions('rtmp-sessions-body', sessions.data.items || []);
-        
+
         setConnectionStatus(true);
     } catch (e) {
         showError(e.message);
@@ -2188,7 +2509,7 @@ function renderLogs(logs) {
     const tbody = document.getElementById('logs-body');
     const searchTerm = document.getElementById('logs-search')?.value.toLowerCase() || '';
     const levelFilter = document.getElementById('logs-level-filter')?.value || '';
-    
+
     const filtered = logs.filter(log => {
         const message = (log.message || '').toLowerCase();
         const level = (log.level || '').toUpperCase();
@@ -2196,7 +2517,7 @@ function renderLogs(logs) {
         const matchesLevel = !levelFilter || level === levelFilter;
         return matchesSearch && matchesLevel;
     });
-    
+
     if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-12 text-center text-gray-500">No log entries found</td></tr>';
         return;
@@ -2205,11 +2526,11 @@ function renderLogs(logs) {
     tbody.innerHTML = filtered.map(log => {
         const level = (log.level || '').toUpperCase();
         let levelClass = 'text-gray-600';
-        if (level === 'ERROR') levelClass = 'text-red-600';
-        else if (level === 'WARN') levelClass = 'text-yellow-600';
-        else if (level === 'INFO') levelClass = 'text-blue-600';
+        if (level === 'ERR') levelClass = 'text-red-600';
+        else if (level === 'WAR') levelClass = 'text-yellow-600';
+        else if (level === 'INF') levelClass = 'text-blue-600';
         else if (level === 'DEBUG') levelClass = 'text-gray-500';
-        
+
         return `
             <tr class="hover:bg-gray-50">
                 <td class="px-6 py-3 text-gray-500 whitespace-nowrap">${escapeHtml(log.timestamp || '-')}</td>
@@ -2248,10 +2569,10 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 document.addEventListener('DOMContentLoaded', () => {
     initSidebar();
     initPathModalEvents();
-    
+
     // Handle hash changes
     window.addEventListener('hashchange', handleHashChange);
-    
+
     // Initial page load
     const initialPage = getPageFromHash();
     currentRoute = window.location.hash;

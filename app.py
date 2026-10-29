@@ -4,12 +4,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
+import asyncio
 
 from config import settings
 from deps import get_mediamtx_client
 from mediamtx_client import MediaMTXClient
 from responses import StandardResponse
 from schemas import PathCreateRequest, PathPatchRequest
+from system_monitor import get_system_monitor
 
 
 def read_log_file(path: str, lines: int = 100):
@@ -17,13 +19,13 @@ def read_log_file(path: str, lines: int = 100):
     try:
         if not os.path.exists(path):
             return {"lines": [], "error": f"Log file not found: {path}"}
-        
+
         with open(path, 'r') as f:
             all_lines = f.readlines()
-        
+
         # Get the last N lines
         last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        
+
         # Parse log lines (assuming JSON format or standard log format)
         parsed_lines = []
         for line in last_lines:
@@ -34,10 +36,22 @@ def read_log_file(path: str, lines: int = 100):
                 # Try to parse as JSON (MediaMTX structured logs)
                 import json
                 log_entry = json.loads(line)
+                # Parse timestamp into a human-readable format if possible
+                raw_ts = log_entry.get("timestamp", log_entry.get("time", ""))
+                formatted_ts = raw_ts
+                if raw_ts:
+                    try:
+                        from datetime import datetime
+                        # Parse ISO8601 string (e.g. 2026-10-28T08:49:59.272353675Z)
+                        dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                        formatted_ts = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+
                 parsed_lines.append({
-                    "timestamp": log_entry.get("time", ""),
+                    "timestamp": formatted_ts,
                     "level": log_entry.get("level", ""),
-                    "message": log_entry.get("msg", "")
+                    "message": log_entry.get("message", log_entry.get("msg", ""))
                 })
             except json.JSONDecodeError:
                 # Fallback: treat as plain text
@@ -46,17 +60,47 @@ def read_log_file(path: str, lines: int = 100):
                     "level": "",
                     "message": line
                 })
-        
+
         return {"lines": parsed_lines, "error": None}
     except Exception as e:
         return {"lines": [], "error": str(e)}
 
 
+async def clean_old_logs(max_size_mb: int = 5, max_lines: int = 5000):
+    """Background task untuk membersihkan file log jika sudah terlalu besar atau terlalu banyak baris."""
+    log_path = settings.LOG_FILE_PATH
+    while True:
+        try:
+            if os.path.exists(log_path):
+                # Cek ukuran file (MB)
+                file_size_mb = os.path.getsize(log_path) / (1024 * 1024)
+                with open(log_path, 'r') as f:
+                    lines = f.readlines()
+
+                if file_size_mb > max_size_mb or len(lines) > max_lines:
+                    # Ambil hanya N baris terakhir (misal 2000 baris terbaru)
+                    keep_lines = lines[-2000:]
+                    with open(log_path, 'w') as f:
+                        f.writelines(keep_lines)
+                    print(f"[Info] Log dibersihkan. Ukuran sebelumnya: {file_size_mb:.2f}MB, baris: {len(lines)}")
+        except Exception as e:
+            print(f"[Warning] Gagal membersihkan log: {e}")
+
+        # Cek setiap 6 jam sekali
+        await asyncio.sleep(6 * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Jalankan background task pembersih log
+    clean_task = asyncio.create_task(clean_old_logs())
     yield
+    clean_task.cancel()
+    MediaMTXClient.force_flush_sync()
     client = get_mediamtx_client()
     await client.close()
+    monitor = get_system_monitor()
+    await monitor.close()
 
 
 app = FastAPI(title="MediaMTX Dashboard", lifespan=lifespan)
@@ -160,7 +204,45 @@ async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx
     return StandardResponse.success(data, "Stream details")
 
 
-# --- SESSIONS ROUTES ---
+@app.post("/api/import/ams")
+async def import_ams_streams(
+    payload: dict = Body(...),
+    client: MediaMTXClient = Depends(get_mediamtx_client)
+):
+    """
+    Import streams from Ant Media Server export format.
+    AMS format has 'app' (prefix) and 'streams' list.
+    """
+    app_prefix = payload.get("app", "").strip()
+    streams = payload.get("streams", [])
+
+    results = {"total": len(streams), "imported": 0, "failed": 0, "errors": []}
+
+    for stream in streams:
+        try:
+            # Mapping AMS -> MediaMTX
+            # Use 'app' as prefix if available to mimic 'applications' grouping
+            raw_name = stream.get("streamId") or stream.get("name")
+            if not raw_name:
+                continue
+
+            full_name = f"{app_prefix}/{raw_name}" if app_prefix else raw_name
+
+            source = stream.get("streamUrl")
+            source_on_demand = bool(stream.get("autoStartStopEnabled", True))
+
+            # MediaMTX add path
+            await client.create_path(
+                name=full_name,
+                source=source,
+                source_on_demand=source_on_demand
+            )
+            results["imported"] += 1
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{raw_name}: {str(e)}")
+
+    return StandardResponse.success(results, f"Imported {results['imported']} streams")
 
 @app.get("/api/sessions")
 async def list_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
@@ -244,6 +326,15 @@ async def rtmp_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
 async def get_metrics(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_metrics()
     return StandardResponse.success({"metrics": data}, "Metrics retrieved")
+
+
+# --- SYSTEM MONITOR ROUTES ---
+
+@app.get("/api/system/metrics")
+async def get_system_metrics():
+    monitor = get_system_monitor()
+    data = await monitor.get_system_metrics()
+    return StandardResponse.success(data, "System metrics retrieved")
 
 
 # --- LOGS ROUTES ---
