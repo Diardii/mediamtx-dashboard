@@ -214,6 +214,7 @@ function bindPageEvents(page) {
         document.getElementById('config-paths-add-btn')?.addEventListener('click', () => openConfigPathModal());
         document.getElementById('config-paths-search')?.addEventListener('input', () => renderConfigPaths(allConfigPaths));
         document.getElementById('config-paths-refresh')?.addEventListener('click', loadConfigPaths);
+        initAmsImport();
     }
 }
 
@@ -504,7 +505,7 @@ async function loadPaths() {
 function renderPaths(paths) {
     const tbody = document.getElementById('paths-table-body');
     const searchTerm = document.getElementById('paths-search')?.value.toLowerCase() || '';
-    
+
     const filtered = paths.filter(p => {
         const searchableValues = [
             p.name,
@@ -516,7 +517,7 @@ function renderPaths(paths) {
             typeof value === 'string' && value.toLowerCase().includes(searchTerm)
         );
     });
-    
+
     if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
         return;
@@ -652,6 +653,47 @@ function updateSourceTypeFields(sourceType) {
 }
 
 // Event listeners for modal fields (initialized after DOM ready)
+function initAmsImport() {
+    const button = document.getElementById('import-ams-btn');
+    const fileInput = document.getElementById('import-ams-file');
+    if (!button || !fileInput) return;
+
+    button.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+        const [file] = fileInput.files;
+        if (!file) return;
+
+        try {
+            const payload = JSON.parse(await file.text());
+            if (!Array.isArray(payload.streams)) {
+                throw new Error('Invalid AMS export: "streams" must be an array');
+            }
+
+            const appName = payload.app || '(no group)';
+            if (!confirm(`Import ${payload.streams.length} stream(s) into group "${appName}"?`)) return;
+
+            button.disabled = true;
+            button.textContent = 'Importing...';
+            const result = await fetchAPI('/import/ams', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+
+            if (!result.success) throw new Error(result.message || 'Import failed');
+            const data = result.data;
+            const failures = data.failed ? ` ${data.failed} failed: ${data.errors.join('; ')}` : '';
+            alert(`${data.imported} of ${data.total} stream(s) imported.${failures}`);
+            await loadPaths();
+        } catch (e) {
+            alert(`Unable to import AMS export: ${e.message}`);
+        } finally {
+            button.disabled = false;
+            button.textContent = 'Import AMS';
+            fileInput.value = '';
+        }
+    });
+}
+
 function initPathModalEvents() {
     const sourceTypeSelect = document.getElementById('path-source-type');
     const sourceOnDemandCheckbox = document.getElementById('source_on_demand');
@@ -807,10 +849,10 @@ async function loadConfigGlobal() {
         const res = await fetchAPI('/server/config');
         if (res.success) {
             originalConfig = res.data;
-            
+
             // Populate form fields
             populateConfigGlobalForm(res.data);
-            
+
             // Populate JSON editor
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
             document.getElementById('config-global-form-status').classList.add('hidden');
@@ -827,7 +869,7 @@ async function loadConfigGlobal() {
 function populateConfigGlobalForm(config) {
     const form = document.querySelector('#page-config-global');
     if (!form) return;
-    
+
     // Simple fields
     const simpleFields = [
         'logLevel', 'logFormat', 'readTimeout', 'writeTimeout', 'readHeaderTimeout',
@@ -837,7 +879,7 @@ function populateConfigGlobalForm(config) {
         'srtLatency', 'srtMaxBandwidth',
         'hlsAllowOrigin', 'hlsSegmentCount', 'hlsSegmentDuration', 'hlsPartDuration'
     ];
-    
+
     simpleFields.forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
         if (el) {
@@ -853,7 +895,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Multi-select fields
     ['logDestinations', 'rtspTransports'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -866,7 +908,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Nested API fields
     const apiFields = ['enabled', 'address', 'encryption', 'authentication', 'trustedProxies', 'corsOrigin'];
     apiFields.forEach(name => {
@@ -886,7 +928,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // Metrics
     ['metrics.enabled', 'metrics.address', 'metrics.encryption'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -897,7 +939,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // PPROF
     ['pprof.enabled', 'pprof.address'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -908,7 +950,7 @@ function populateConfigGlobalForm(config) {
             }
         }
     });
-    
+
     // WebRTC encryption
     const webrtcEncEl = form.querySelector('[name="webrtcEncryption"]');
     if (webrtcEncEl) {
@@ -917,7 +959,7 @@ function populateConfigGlobalForm(config) {
             webrtcEncEl.value = value;
         }
     }
-    
+
     // SRT encryption
     const srtEncEl = form.querySelector('[name="srtEncryption"]');
     if (srtEncEl) {
@@ -926,7 +968,7 @@ function populateConfigGlobalForm(config) {
             srtEncEl.value = value;
         }
     }
-    
+
     // HLS encryption
     const hlsEncEl = form.querySelector('[name="hlsEncryption"]');
     if (hlsEncEl) {
@@ -940,17 +982,17 @@ function populateConfigGlobalForm(config) {
 function collectConfigGlobalForm() {
     const form = document.querySelector('#page-config-global');
     if (!form) return {};
-    
+
     const formData = new FormData(form);
     const updates = {};
-    
+
     for (const [name, value] of formData.entries()) {
         const parsed = parseFormValue(name, value);
         if (parsed !== null) {
             setNestedValue(updates, name, parsed);
         }
     }
-    
+
     // Handle multi-selects that FormData doesn't capture well
     ['logDestinations', 'rtspTransports'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -961,7 +1003,7 @@ function collectConfigGlobalForm() {
             }
         }
     });
-    
+
     // Handle comma-separated fields
     ['api.trustedProxies', 'api.corsOrigin'].forEach(name => {
         const el = form.querySelector(`[name="${name}"]`);
@@ -969,26 +1011,26 @@ function collectConfigGlobalForm() {
             setNestedValue(updates, name, el.value.split(',').map(s => s.trim()).filter(Boolean));
         }
     });
-    
+
     return updates;
 }
 
 async function saveConfigGlobalForm() {
     const statusEl = document.getElementById('config-global-form-status');
     const btn = document.getElementById('config-global-save-form');
-    
+
     btn.disabled = true;
     btn.textContent = 'Saving...';
-    
+
     try {
         const updates = collectConfigGlobalForm();
         const mergedConfig = { ...originalConfig, ...updates };
-        
+
         const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(mergedConfig),
         });
-        
+
         if (res.success) {
             originalConfig = res.data;
             populateConfigGlobalForm(res.data);
@@ -1012,17 +1054,17 @@ async function saveConfigGlobalJSON() {
     const editor = document.getElementById('config-global-editor');
     const statusEl = document.getElementById('config-global-json-status');
     const btn = document.getElementById('config-global-save-json');
-    
+
     btn.disabled = true;
     btn.textContent = 'Saving...';
-    
+
     try {
         const config = JSON.parse(editor.value);
         const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(config),
         });
-        
+
         if (res.success) {
             originalConfig = res.data;
             populateConfigGlobalForm(res.data);
@@ -1241,7 +1283,7 @@ function renderConfigPaths(paths) {
             sourceType = 'URL Source';
             sourceDisplay = p.source;
         }
-        
+
         const cellRenderers = {
             name: path => `<td class="px-6 py-4 font-mono text-sm">${escapeHtml(path.name)}</td>`,
             type: () => `

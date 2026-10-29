@@ -201,7 +201,45 @@ async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx
     return StandardResponse.success(data, "Stream details")
 
 
-# --- SESSIONS ROUTES ---
+@app.post("/api/import/ams")
+async def import_ams_streams(
+    payload: dict = Body(...),
+    client: MediaMTXClient = Depends(get_mediamtx_client)
+):
+    """
+    Import streams from Ant Media Server export format.
+    AMS format has 'app' (prefix) and 'streams' list.
+    """
+    app_prefix = payload.get("app", "").strip()
+    streams = payload.get("streams", [])
+
+    results = {"total": len(streams), "imported": 0, "failed": 0, "errors": []}
+
+    for stream in streams:
+        try:
+            # Mapping AMS -> MediaMTX
+            # Use 'app' as prefix if available to mimic 'applications' grouping
+            raw_name = stream.get("streamId") or stream.get("name")
+            if not raw_name:
+                continue
+
+            full_name = f"{app_prefix}/{raw_name}" if app_prefix else raw_name
+
+            source = stream.get("streamUrl")
+            source_on_demand = bool(stream.get("autoStartStopEnabled", True))
+
+            # MediaMTX add path
+            await client.create_path(
+                name=full_name,
+                source=source,
+                source_on_demand=source_on_demand
+            )
+            results["imported"] += 1
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{raw_name}: {str(e)}")
+
+    return StandardResponse.success(results, f"Imported {results['imported']} streams")
 
 @app.get("/api/sessions")
 async def list_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
