@@ -489,9 +489,9 @@ let allPaths = [];
 
 async function loadPaths() {
     try {
-        const paths = await fetchAPI('/paths');
+        const paths = await fetchAPI('/streams');
         if (paths.success) {
-            allPaths = paths.data.items;
+            allPaths = paths.data.items || [];
             renderPaths(allPaths);
         }
         setConnectionStatus(true);
@@ -504,26 +504,34 @@ async function loadPaths() {
 function renderPaths(paths) {
     const tbody = document.getElementById('paths-table-body');
     const searchTerm = document.getElementById('paths-search')?.value.toLowerCase() || '';
-
-    const filtered = paths.filter(p =>
-        p.name.toLowerCase().includes(searchTerm) ||
-        (p.source && p.source.toLowerCase().includes(searchTerm))
-    );
-
+    
+    const filtered = paths.filter(p => {
+        const searchableValues = [
+            p.name,
+            p.confName,
+            p.source?.type,
+            p.source?.id,
+        ];
+        return searchableValues.some(value =>
+            typeof value === 'string' && value.toLowerCase().includes(searchTerm)
+        );
+    });
+    
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
         return;
     }
 
     tbody.innerHTML = filtered.map(p => `
         <tr class="hover:bg-gray-50">
             <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
-            <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.source || '(publisher)')}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(p.source?.type || '-')}</td>
             <td class="px-6 py-4 text-sm">
-                <span class="status-badge ${p.source_on_demand ? 'status-online' : 'status-offline'}">
-                    ${p.source_on_demand ? 'Yes' : 'No'}
+                <span class="status-badge ${p.online ? 'status-online' : 'status-offline'}">
+                    ${p.online ? 'Online' : 'Offline'}
                 </span>
             </td>
+            <td class="px-6 py-4 text-sm">${formatNumber(Array.isArray(p.readers) ? p.readers.length : 0)}</td>
             <td class="px-6 py-4">
                 <button onclick="editPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
                 <button onclick="deletePath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
@@ -669,10 +677,23 @@ function initPathModalEvents() {
     }
 }
 
-window.editPath = function(name) {
-    const path = allPaths.find(p => p.name === name);
-    if (path) {
-        openPathModal(path);
+window.editPath = async function(name) {
+    try {
+        const response = await fetchAPI(`/paths/${encodeURIComponent(name)}`);
+        if (response.success) {
+            const config = response.data;
+            openPathModal({
+                ...config,
+                source_on_demand: config.sourceOnDemand,
+                source_on_demand_start_timeout: config.sourceOnDemandStartTimeout,
+                source_on_demand_close_after: config.sourceOnDemandCloseAfter,
+                source_redirect: config.sourceRedirect,
+                max_readers: config.maxReaders,
+            });
+        }
+    } catch (e) {
+        showError(e.message);
+        alert(`Failed to load path configuration: ${e.message}`);
     }
 };
 
