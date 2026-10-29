@@ -141,8 +141,6 @@ class MediaMTXClient:
 
     async def patch_server_config(self, payload):
         try:
-            print(f"payload \n({payload})", flush=True)
-
             cleaned_payload = {}
             for key, value in payload.items():
                 if isinstance(value, dict):
@@ -385,6 +383,7 @@ class MediaMTXClient:
     async def get_stream_detail(self, name):
         encoded_name = quote(name, safe="")
         url = f"{self.base_url}/paths/get/{encoded_name}"
+
         r = await self.client.get(url)
         r.raise_for_status()
         data = r.json()
