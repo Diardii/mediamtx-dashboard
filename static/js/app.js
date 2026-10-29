@@ -189,12 +189,21 @@ function bindPageEvents(page) {
         });
     }
     if (page === 'config-global') {
-        document.getElementById('config-global-save')?.addEventListener('click', saveConfigGlobal);
+        document.getElementById('config-global-save-form')?.addEventListener('click', saveConfigGlobalForm);
+        document.getElementById('config-global-save-json')?.addEventListener('click', saveConfigGlobalJSON);
         document.getElementById('config-global-reset')?.addEventListener('click', resetConfigGlobal);
     }
     if (page === 'config-defaults') {
-        document.getElementById('config-defaults-save')?.addEventListener('click', saveConfigDefaults);
+        document.getElementById('config-defaults-form')?.addEventListener('submit', (event) => {
+            event.preventDefault();
+            saveConfigDefaults();
+        });
         document.getElementById('config-defaults-reset')?.addEventListener('click', resetConfigDefaults);
+        document.getElementById('config-defaults-form')?.addEventListener('input', (event) => {
+            if (event.target.matches('[data-config-key]')) {
+                event.currentTarget.dataset.dirty = 'true';
+            }
+        });
     }
     if (page === 'runtime-logs') {
         document.getElementById('logs-search')?.addEventListener('input', () => renderLogs(allLogs));
@@ -737,14 +746,54 @@ function openConfigPathModal(path = null) {
 // --- Config Global ---
 
 let originalConfig = null;
+let originalDefaults = null;
+
+function setNestedValue(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (!(key in current) || current[key] === null || typeof current[key] !== 'object') {
+            current[key] = {};
+        }
+        current = current[key];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+
+function getNestedValue(obj, path) {
+    return path.split('.').reduce((o, k) => (o || {})[k], obj);
+}
+
+function parseFormValue(name, value) {
+    // Handle special types
+    if (name === 'logDestinations' || name === 'rtspTransports' || name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+        if (name === 'api.trustedProxies' || name === 'api.corsOrigin') {
+            return value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return value; // already array from multi-select
+    }
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    if (value === '' || value === null) return null;
+    const num = Number(value);
+    if (!isNaN(num) && value.trim() !== '') return num;
+    return value;
+}
 
 async function loadConfigGlobal() {
     try {
         const res = await fetchAPI('/server/config');
         if (res.success) {
             originalConfig = res.data;
+            
+            // Populate form fields
+            populateConfigGlobalForm(res.data);
+            
+            // Populate JSON editor
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
-            document.getElementById('config-global-status').classList.add('hidden');
+            document.getElementById('config-global-form-status').classList.add('hidden');
+            document.getElementById('config-global-json-status').classList.add('hidden');
         }
         setConnectionStatus(true);
     } catch (e) {
@@ -754,41 +803,230 @@ async function loadConfigGlobal() {
     }
 }
 
-function saveConfigGlobal() {
-    const editor = document.getElementById('config-global-editor');
-    const statusEl = document.getElementById('config-global-status');
+function populateConfigGlobalForm(config) {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return;
+    
+    // Simple fields
+    const simpleFields = [
+        'logLevel', 'logFormat', 'readTimeout', 'writeTimeout', 'readHeaderTimeout',
+        'rtspAddress', 'rtmpAddress', 'hlsAddress', 'webrtcAddress', 'srtAddress', 'playbackAddress',
+        'rtpAddress', 'rtcpAddress',
+        'webrtcICEHostNAT1To1', 'webrtcICEUDPMulticastAddress', 'webrtcICEPortRange', 'webrtcAdditionalHosts',
+        'srtLatency', 'srtMaxBandwidth',
+        'hlsAllowOrigin', 'hlsSegmentCount', 'hlsSegmentDuration', 'hlsPartDuration'
+    ];
+    
+    simpleFields.forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                if (el.type === 'checkbox') {
+                    el.checked = value;
+                } else if (el.multiple) {
+                    // multi-select handled separately
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Multi-select fields
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (Array.isArray(value)) {
+                Array.from(el.options).forEach(opt => {
+                    opt.selected = value.includes(opt.value);
+                });
+            }
+        }
+    });
+    
+    // Nested API fields
+    const apiFields = ['enabled', 'address', 'encryption', 'authentication', 'trustedProxies', 'corsOrigin'];
+    apiFields.forEach(name => {
+        const el = form.querySelector(`[name="api.${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, `api.${name}`);
+            if (value !== undefined && value !== null) {
+                if (el.multiple || name === 'trustedProxies' || name === 'corsOrigin') {
+                    if (Array.isArray(value)) {
+                        el.value = value.join(', ');
+                    } else if (typeof value === 'string') {
+                        el.value = value;
+                    }
+                } else {
+                    el.value = value;
+                }
+            }
+        }
+    });
+    
+    // Metrics
+    ['metrics.enabled', 'metrics.address', 'metrics.encryption'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // PPROF
+    ['pprof.enabled', 'pprof.address'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const value = getNestedValue(config, name);
+            if (value !== undefined && value !== null) {
+                el.value = value;
+            }
+        }
+    });
+    
+    // WebRTC encryption
+    const webrtcEncEl = form.querySelector('[name="webrtcEncryption"]');
+    if (webrtcEncEl) {
+        const value = getNestedValue(config, 'webrtcEncryption');
+        if (value !== undefined && value !== null) {
+            webrtcEncEl.value = value;
+        }
+    }
+    
+    // SRT encryption
+    const srtEncEl = form.querySelector('[name="srtEncryption"]');
+    if (srtEncEl) {
+        const value = getNestedValue(config, 'srtEncryption');
+        if (value !== undefined && value !== null) {
+            srtEncEl.value = value;
+        }
+    }
+    
+    // HLS encryption
+    const hlsEncEl = form.querySelector('[name="hlsEncryption"]');
+    if (hlsEncEl) {
+        const value = getNestedValue(config, 'hlsEncryption');
+        if (value !== undefined && value !== null) {
+            hlsEncEl.value = value;
+        }
+    }
+}
 
+function collectConfigGlobalForm() {
+    const form = document.querySelector('#page-config-global');
+    if (!form) return {};
+    
+    const formData = new FormData(form);
+    const updates = {};
+    
+    for (const [name, value] of formData.entries()) {
+        const parsed = parseFormValue(name, value);
+        if (parsed !== null) {
+            setNestedValue(updates, name, parsed);
+        }
+    }
+    
+    // Handle multi-selects that FormData doesn't capture well
+    ['logDestinations', 'rtspTransports'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el) {
+            const selected = Array.from(el.selectedOptions).map(o => o.value);
+            if (selected.length > 0) {
+                setNestedValue(updates, name, selected);
+            }
+        }
+    });
+    
+    // Handle comma-separated fields
+    ['api.trustedProxies', 'api.corsOrigin'].forEach(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (el && el.value.trim()) {
+            setNestedValue(updates, name, el.value.split(',').map(s => s.trim()).filter(Boolean));
+        }
+    });
+    
+    return updates;
+}
+
+async function saveConfigGlobalForm() {
+    const statusEl = document.getElementById('config-global-form-status');
+    const btn = document.getElementById('config-global-save-form');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    
+    try {
+        const updates = collectConfigGlobalForm();
+        const mergedConfig = { ...originalConfig, ...updates };
+        
+        const res = await fetchAPI('/server/config', {
+            method: 'PATCH',
+            body: JSON.stringify(mergedConfig),
+        });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-4 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
+    } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-4 text-sm text-red-600';
+    } finally {
+        statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save Form';
+    }
+}
+
+async function saveConfigGlobalJSON() {
+    const editor = document.getElementById('config-global-editor');
+    const statusEl = document.getElementById('config-global-json-status');
+    const btn = document.getElementById('config-global-save-json');
+    
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    
     try {
         const config = JSON.parse(editor.value);
-
-        fetchAPI('/server/config', {
+        const res = await fetchAPI('/server/config', {
             method: 'PATCH',
             body: JSON.stringify(config),
-        }).then(res => {
-            if (res.success) {
-                originalConfig = config;
-                statusEl.textContent = 'Configuration saved successfully';
-                statusEl.className = 'mt-4 text-sm text-green-600';
-                statusEl.classList.remove('hidden');
-            } else {
-                throw new Error('Failed to save');
-            }
-        }).catch(err => {
-            statusEl.textContent = `Error: ${err.message}`;
-            statusEl.className = 'mt-4 text-sm text-red-600';
-            statusEl.classList.remove('hidden');
         });
+        
+        if (res.success) {
+            originalConfig = res.data;
+            populateConfigGlobalForm(res.data);
+            editor.value = JSON.stringify(res.data, null, 2);
+            statusEl.textContent = 'Configuration saved successfully';
+            statusEl.className = 'mt-3 text-sm text-green-600';
+        } else {
+            throw new Error('Failed to save');
+        }
     } catch (e) {
-        statusEl.textContent = 'Invalid JSON format';
-        statusEl.className = 'mt-4 text-sm text-red-600';
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = 'mt-3 text-sm text-red-600';
+    } finally {
         statusEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Save JSON';
     }
 }
 
 function resetConfigGlobal() {
     if (originalConfig) {
+        populateConfigGlobalForm(originalConfig);
         document.getElementById('config-global-editor').value = JSON.stringify(originalConfig, null, 2);
-        document.getElementById('config-global-status').classList.add('hidden');
+        document.getElementById('config-global-form-status').classList.add('hidden');
+        document.getElementById('config-global-json-status').classList.add('hidden');
     }
 }
 
@@ -963,6 +1201,14 @@ function renderConfigPaths(paths) {
         return;
     }
 
+    const columnsFromHeaders = Array.from(
+        tbody.closest('table').querySelectorAll('thead [data-config-path-column]'),
+        header => header.dataset.configPathColumn,
+    );
+    const columns = columnsFromHeaders.length
+        ? columnsFromHeaders
+        : ['name', 'type', 'source', 'fallback', 'on-demand', 'max-readers', 'actions'];
+
     tbody.innerHTML = filtered.map(p => {
         // Determine source type for display
         let sourceType = 'Publisher';
@@ -974,27 +1220,34 @@ function renderConfigPaths(paths) {
             sourceType = 'URL Source';
             sourceDisplay = p.source;
         }
-
-        return `
-            <tr class="hover:bg-gray-50">
-                <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
+        
+        const cellRenderers = {
+            name: path => `<td class="px-6 py-4 font-mono text-sm">${escapeHtml(path.name)}</td>`,
+            type: () => `
                 <td class="px-6 py-4 text-sm">
                     <span class="status-badge ${sourceType === 'Publisher' ? 'status-offline' : sourceType === 'URL Source' ? 'status-online' : 'bg-purple-100 text-purple-800'}">
                         ${sourceType}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(sourceDisplay)}</td>
-                <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate block">${escapeHtml(p.fallback || '-')}</td>
+                </td>`,
+            source: () => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(sourceDisplay)}</span></td>`,
+            fallback: path => `<td class="px-6 py-4 text-sm text-gray-600 max-w-xs overflow-hidden"><span class="block truncate">${escapeHtml(path.fallback || '-')}</span></td>`,
+            'on-demand': path => `
                 <td class="px-6 py-4 text-sm">
-                    <span class="status-badge ${p.source_on_demand ? 'status-online' : 'status-offline'}">
-                        ${p.source_on_demand ? 'Yes' : 'No'}
+                    <span class="status-badge ${path.source_on_demand ? 'status-online' : 'status-offline'}">
+                        ${path.source_on_demand ? 'Yes' : 'No'}
                     </span>
-                </td>
-                <td class="px-6 py-4 text-sm">${p.max_readers !== null && p.max_readers !== undefined ? p.max_readers : 'Unlimited'}</td>
-                <td class="px-6 py-4">
-                    <button onclick="editConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
-                    <button onclick="deleteConfigPath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
-                </td>
+                </td>`,
+            'max-readers': path => `<td class="px-6 py-4 text-sm">${path.max_readers !== null && path.max_readers !== undefined ? path.max_readers : 'Unlimited'}</td>`,
+            actions: path => `
+                <td class="px-6 py-4 text-right whitespace-nowrap">
+                    <button onclick="editConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
+                    <button onclick="deleteConfigPath('${escapeHtml(path.name)}')" class="btn-icon btn-danger">Delete</button>
+                </td>`,
+        };
+
+        return `
+            <tr class="hover:bg-gray-50">
+                ${columns.map(column => cellRenderers[column]?.(p) || '<td></td>').join('')}
             </tr>
         `;
     }).join('');
@@ -1021,54 +1274,282 @@ window.deleteConfigPath = async function(name) {
 async function loadConfigDefaults() {
     try {
         const res = await fetchAPI('/config/path-defaults');
-        if (res.success) {
+        if (!res.success || !res.data || typeof res.data !== 'object' || Array.isArray(res.data)) {
+            throw new Error(res.message || 'MediaMTX returned an invalid Path Defaults configuration');
+        }
+
+        const form = document.getElementById('config-defaults-form');
+        const hasUnsavedChanges = form?.dataset.dirty === 'true';
+        const changedOnServer = JSON.stringify(res.data) !== JSON.stringify(originalDefaults);
+        if (!hasUnsavedChanges && (originalDefaults === null || changedOnServer)) {
             originalDefaults = res.data;
-            document.getElementById('config-defaults-editor').value = JSON.stringify(res.data, null, 2);
-            document.getElementById('config-defaults-status').classList.add('hidden');
+            renderConfigDefaults(res.data);
+            if (form) form.dataset.dirty = 'false';
+            setConfigDefaultsStatus('', '');
         }
         setConnectionStatus(true);
     } catch (e) {
         showError(e.message);
         setConnectionStatus(false);
-        document.getElementById('config-defaults-editor').value = 'Failed to load configuration';
+        setConfigDefaultsStatus(`Failed to load Path Defaults: ${e.message}`, 'error');
     }
 }
 
-function saveConfigDefaults() {
-    const editor = document.getElementById('config-defaults-editor');
-    const statusEl = document.getElementById('config-defaults-status');
+function getPathDefaultsGroup(key) {
+    if (key.startsWith('runOn')) return 'Lifecycle Commands';
+    if (key.startsWith('record')) return 'Recording';
+    if (key.startsWith('alwaysAvailable') || key === 'maxReaders' || key === 'useAbsoluteTimestamp' || key === 'srtReadPassphrase') {
+        return 'Readers & Tracks';
+    }
+    if (key.startsWith('rpiCamera')) return 'Raspberry Pi Camera';
+    if (key === 'name' || key === 'source' || key.startsWith('source') || key === 'forward') {
+        return 'Source';
+    }
+    if (key.startsWith('rtsp') || key.startsWith('rtmp') || key.startsWith('srt') || key.startsWith('whep') || key.startsWith('moq') || key === 'rtpSDP') {
+        return 'Protocol Options';
+    }
+    return 'General';
+}
+
+function getPathDefaultsLabel(key) {
+    if (key === 'runOnUnDemand') return 'Run On Un-Demand';
+    return key
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/^./, (character) => character.toUpperCase());
+}
+
+function getPathDefaultsKind(key, value) {
+    if (Array.isArray(value)) return 'array';
+    if (value !== null && typeof value === 'object') return 'object';
+    if (value === null) return 'null';
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return 'number';
+    if (typeof value === 'string') return 'string';
+    throw new Error(`Unsupported Path Defaults value for "${key}"`);
+}
+
+function isPathDefaultsDuration(key, value) {
+    return typeof value === 'string' &&
+        (/timeout|closeafter|duration/i.test(key) || /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)/.test(value));
+}
+
+function renderPathDefaultsField(key, value) {
+    const kind = getPathDefaultsKind(key, value);
+    const label = getPathDefaultsLabel(key);
+    const tooltip = `MediaMTX field: ${key} (${kind})`;
+    const attributes = `data-config-key="${escapeHtml(key)}" data-config-kind="${kind}"`;
+
+    if (kind === 'boolean') {
+        return `
+            <div class="min-w-0">
+                <label class="inline-flex cursor-pointer items-center gap-3 pt-2">
+                    <input type="checkbox" ${attributes} ${value ? 'checked' : ''} class="peer sr-only">
+                    <span class="relative h-6 w-11 rounded-full bg-gray-300 transition-colors peer-checked:bg-blue-600 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2 after:absolute after:left-1 after:top-1 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span>
+                    <span class="text-sm font-medium text-gray-700">${escapeHtml(label)}</span>
+                    <span class="cursor-help text-gray-400" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">
+                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM9 8a1 1 0 1 1 2 0c0 .55-.25.79-.71 1.16-.58.46-1.29 1.04-1.29 2.34a1 1 0 1 0 2 0c0-.34.08-.48.54-.85C12.12 10.1 13 9.39 13 8a3 3 0 1 0-6 0 1 1 0 1 0 2 0Zm1 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"></path>
+                        </svg>
+                    </span>
+                </label>
+            </div>
+        `;
+    }
+
+    const valueText = kind === 'array' || kind === 'object'
+        ? JSON.stringify(value, null, 2)
+        : value === null ? '' : String(value);
+    const duration = kind === 'string' && isPathDefaultsDuration(key, value);
+    const inputClass = 'w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
+    let control;
+
+    if (kind === 'array' || kind === 'object' || key.startsWith('runOn') || key === 'rtpSDP') {
+        control = `<textarea ${attributes} rows="${kind === 'array' || kind === 'object' ? 4 : 3}" class="${inputClass} font-mono" spellcheck="false">${escapeHtml(valueText)}</textarea>`;
+    } else if (kind === 'number') {
+        const step = Number.isInteger(value) ? '1' : 'any';
+        control = `<input ${attributes} type="number" step="${step}" value="${escapeHtml(valueText)}" class="${inputClass}">`;
+    } else {
+        const placeholder = duration ? 'e.g. 10s or 1h30m' : '';
+        control = `<input ${attributes} type="text" value="${escapeHtml(valueText)}" placeholder="${placeholder}" ${kind === 'null' ? 'data-config-null="true"' : ''} class="${inputClass}">`;
+    }
+
+    return `
+        <label class="block min-w-0">
+            <span class="mb-2 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                ${escapeHtml(label)}
+                <span class="cursor-help text-gray-400" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}">
+                    <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM9 8a1 1 0 1 1 2 0c0 .55-.25.79-.71 1.16-.58.46-1.29 1.04-1.29 2.34a1 1 0 1 0 2 0c0-.34.08-.48.54-.85C12.12 10.1 13 9.39 13 8a3 3 0 1 0-6 0 1 1 0 1 0 2 0Zm1 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"></path>
+                    </svg>
+                </span>
+            </span>
+            ${control}
+            ${duration ? '<span class="mt-1 block text-xs text-gray-500">Enter a MediaMTX duration, such as 10s or 1h30m.</span>' : ''}
+        </label>
+    `;
+}
+
+function renderConfigDefaults(config) {
+    const container = document.getElementById('config-defaults-fields');
+    if (!container) return;
+
+    const groups = new Map();
+    Object.entries(config).forEach(([key, value]) => {
+        const group = getPathDefaultsGroup(key);
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push([key, value]);
+    });
+
+    if (groups.size === 0) {
+        container.innerHTML = '<div class="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500">MediaMTX returned no Path Defaults fields.</div>';
+        return;
+    }
+
+    container.innerHTML = Array.from(groups.entries()).map(([group, fields]) => `
+        <section class="min-w-0 rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
+            <h3 class="mb-5 text-lg font-semibold text-gray-900">${escapeHtml(group)}</h3>
+            <div class="grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                ${fields.map(([key, value]) => renderPathDefaultsField(key, value)).join('')}
+            </div>
+        </section>
+    `).join('');
+}
+
+function setConfigDefaultsStatus(message, type) {
+    const status = document.getElementById('config-defaults-status');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `text-sm ${type === 'error' ? 'text-red-600' : type === 'success' ? 'text-green-700' : 'hidden'}`;
+}
+
+function parsePathDefaultsDuration(value, key) {
+    const durationPattern = /[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)/g;
+    const parts = value.match(durationPattern);
+    if (!parts || parts.join('') !== value) {
+        throw new Error(`${getPathDefaultsLabel(key)} must be a valid duration, such as 10s or 1h30m.`);
+    }
+    return value;
+}
+
+function validatePathDefaultsValueShape(expected, value, path) {
+    if (Array.isArray(expected)) {
+        if (!Array.isArray(value)) throw new Error(`${path} must be a JSON array.`);
+        if (expected.length > 0) {
+            value.forEach((item, index) => validatePathDefaultsValueShape(expected[0], item, `${path}[${index}]`));
+        }
+        return;
+    }
+
+    if (expected !== null && typeof expected === 'object') {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error(`${path} must be a JSON object.`);
+        }
+        Object.entries(expected).forEach(([key, expectedValue]) => {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                validatePathDefaultsValueShape(expectedValue, value[key], `${path}.${key}`);
+            }
+        });
+        return;
+    }
+
+    if (expected === null ? value !== null : typeof value !== typeof expected) {
+        throw new Error(`${path} must have the same value type as the loaded MediaMTX configuration.`);
+    }
+    if (typeof expected === 'number' && Number.isInteger(expected) && !Number.isInteger(value)) {
+        throw new Error(`${path} must be an integer.`);
+    }
+}
+
+function collectConfigDefaults() {
+    const form = document.getElementById('config-defaults-form');
+    const controls = Array.from(form.querySelectorAll('[data-config-key]'));
+    const values = {};
+
+    Object.entries(originalDefaults).forEach(([key, originalValue]) => {
+        const control = controls.find((candidate) => candidate.dataset.configKey === key);
+        if (!control) throw new Error(`Missing form field for "${key}".`);
+
+        const kind = control.dataset.configKind;
+        if (kind === 'boolean') {
+            values[key] = control.checked;
+        } else if (kind === 'number') {
+            if (control.value.trim() === '') {
+                throw new Error(`${getPathDefaultsLabel(key)} must be a number.`);
+            }
+            const numberValue = Number(control.value);
+            if (!Number.isFinite(numberValue) || (Number.isInteger(originalValue) && !Number.isInteger(numberValue))) {
+                throw new Error(`${getPathDefaultsLabel(key)} must be a valid ${Number.isInteger(originalValue) ? 'integer' : 'number'}.`);
+            }
+            values[key] = numberValue;
+        } else if (kind === 'array' || kind === 'object') {
+            let parsed;
+            try {
+                parsed = JSON.parse(control.value);
+            } catch {
+                throw new Error(`${getPathDefaultsLabel(key)} must contain valid JSON.`);
+            }
+            if (kind === 'array' ? !Array.isArray(parsed) : parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error(`${getPathDefaultsLabel(key)} must remain a JSON ${kind}.`);
+            }
+            validatePathDefaultsValueShape(originalValue, parsed, getPathDefaultsLabel(key));
+            values[key] = parsed;
+        } else if (kind === 'null' && control.dataset.configNull === 'true' && control.value === '') {
+            values[key] = null;
+        } else {
+            const value = control.value;
+            values[key] = isPathDefaultsDuration(key, originalValue)
+                ? parsePathDefaultsDuration(value, key)
+                : value;
+        }
+    });
+
+    return values;
+}
+
+async function saveConfigDefaults() {
+    const form = document.getElementById('config-defaults-form');
+    const saveButton = document.getElementById('config-defaults-save');
 
     try {
-        const config = JSON.parse(editor.value);
+        const config = collectConfigDefaults();
+        saveButton.disabled = true;
+        saveButton.classList.add('opacity-60', 'cursor-not-allowed');
 
-        fetchAPI('/config/path-defaults', {
+        const res = await fetchAPI('/config/path-defaults', {
             method: 'PATCH',
             body: JSON.stringify(config),
-        }).then(res => {
-            if (res.success) {
-                originalDefaults = config;
-                statusEl.textContent = 'Configuration saved successfully';
-                statusEl.className = 'mt-4 text-sm text-green-600';
-                statusEl.classList.remove('hidden');
-            } else {
-                throw new Error('Failed to save');
-            }
-        }).catch(err => {
-            statusEl.textContent = `Error: ${err.message}`;
-            statusEl.className = 'mt-4 text-sm text-red-600';
-            statusEl.classList.remove('hidden');
         });
+        if (!res.success) throw new Error(res.message || 'MediaMTX did not apply the Path Defaults configuration');
+
+        const latest = await fetchAPI('/config/path-defaults');
+        if (!latest.success || !latest.data || typeof latest.data !== 'object' || Array.isArray(latest.data)) {
+            throw new Error('The runtime accepted the update, but the updated values could not be reloaded for confirmation.');
+        }
+
+        originalDefaults = latest.data;
+        renderConfigDefaults(originalDefaults);
+        form.dataset.dirty = 'false';
+        setConfigDefaultsStatus(
+            'Path Defaults updated in the MediaMTX runtime. This change is not written to mediamtx.yml and will be lost after a MediaMTX restart.',
+            'success'
+        );
+        setConnectionStatus(true);
     } catch (e) {
-        statusEl.textContent = 'Invalid JSON format';
-        statusEl.className = 'mt-4 text-sm text-red-600';
-        statusEl.classList.remove('hidden');
+        showError(e.message);
+        setConfigDefaultsStatus(`Unable to update Path Defaults: ${e.message}`, 'error');
+    } finally {
+        if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
     }
 }
 
 function resetConfigDefaults() {
-    if (originalDefaults) {
-        document.getElementById('config-defaults-editor').value = JSON.stringify(originalDefaults, null, 2);
-        document.getElementById('config-defaults-status').classList.add('hidden');
+    if (originalDefaults !== null) {
+        renderConfigDefaults(originalDefaults);
+        document.getElementById('config-defaults-form').dataset.dirty = 'false';
+        setConfigDefaultsStatus('', '');
     }
 }
 
