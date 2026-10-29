@@ -1,7 +1,7 @@
 <div id="page-paths" class="page">
     <div class="mb-6">
         <h2 class="text-2xl font-bold text-gray-900">Paths</h2>
-        <p class="text-gray-600 mt-1">Manage stream path configurations</p>
+        <p class="text-gray-600 mt-1">Monitor active stream paths and their runtime status</p>
     </div>
 
     <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -34,25 +34,6 @@
                     />
                 </div>
             </div>
-            <button
-                id="add-path-btn"
-                class="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-                <svg
-                    class="w-4 h-4 inline mr-1"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                >
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M12 4v16m8-8H4"
-                    ></path>
-                </svg>
-                Add Path
-            </button>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full">
@@ -71,7 +52,12 @@
                         <th
                             class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                         >
-                            On Demand
+                            Status
+                        </th>
+                        <th
+                            class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        >
+                            Readers
                         </th>
                         <th
                             class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -83,7 +69,7 @@
                 <tbody id="paths-table-body" class="divide-y divide-gray-200">
                     <tr>
                         <td
-                            colspan="4"
+                            colspan="5"
                             class="px-6 py-12 text-center text-gray-500"
                         >
                             Loading...
