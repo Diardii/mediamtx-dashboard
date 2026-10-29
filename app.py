@@ -10,6 +10,7 @@ from deps import get_mediamtx_client
 from mediamtx_client import MediaMTXClient
 from responses import StandardResponse
 from schemas import PathCreateRequest, PathPatchRequest
+from system_monitor import get_system_monitor
 
 
 def read_log_file(path: str, lines: int = 100):
@@ -57,6 +58,8 @@ async def lifespan(app: FastAPI):
     yield
     client = get_mediamtx_client()
     await client.close()
+    monitor = get_system_monitor()
+    await monitor.close()
 
 
 app = FastAPI(title="MediaMTX Dashboard", lifespan=lifespan)
@@ -244,6 +247,15 @@ async def rtmp_sessions(client: MediaMTXClient = Depends(get_mediamtx_client)):
 async def get_metrics(client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_metrics()
     return StandardResponse.success({"metrics": data}, "Metrics retrieved")
+
+
+# --- SYSTEM MONITOR ROUTES ---
+
+@app.get("/api/system/metrics")
+async def get_system_metrics():
+    monitor = get_system_monitor()
+    data = await monitor.get_system_metrics()
+    return StandardResponse.success(data, "System metrics retrieved")
 
 
 # --- LOGS ROUTES ---
