@@ -19,7 +19,8 @@ function formatBytes(bytes) {
 }
 
 function formatNumber(num) {
-    return num.toLocaleString();
+    if (num === undefined || num === null || isNaN(num)) return '0';
+    return Number(num).toLocaleString();
 }
 
 function getUptimeSeconds(startedString) {
@@ -650,17 +651,18 @@ async function loadDashboard() {
     }
 
     // 4. Total Paths from config paths endpoint
+    const totalPaths = document.getElementById('server-total-paths');
     try {
         const paths = await fetchAPI('/paths');
         if (paths.success) {
             const pathCount = (paths.data.items || []).length;
-            document.getElementById('server-total-paths').textContent = formatNumber(pathCount);
+            totalPaths.textContent = formatNumber(pathCount);
         } else {
-            document.getElementById('server-total-paths').textContent = '-';
+            totalPaths.textContent = '-';
         }
     } catch (e) {
         showError('paths: ' + e.message);
-        document.getElementById('server-total-paths').textContent = '-';
+        totalPaths.textContent = '-';
     }
 
     // 5. Active paths and total readers already rendered by summary
@@ -728,42 +730,26 @@ function renderServerStatus(health) {
 function renderStreams(streams) {
     const tbody = document.getElementById('streams-table-body');
     const countEl = document.getElementById('streams-count');
-    const activepaths = document.getElementById('active-paths');
-    const onlyActive = activepaths ? activepaths.checked : false;
 
-    const filteredStreams = streams.filter(s => {
-        if (onlyActive) {
-            return s.ready === true;
-        }
-        return true;
-    });
-
-    if (filteredStreams.length === 0) {
+    if (streams.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No active streams</td></tr>';
         if (countEl) countEl.textContent = '0 streams';
         return;
     }
 
-    let active = 0;
-
-    tbody.innerHTML = filteredStreams.map(s => {
-      const tracks = Array.isArray(s.tracks) ? s.tracks : [];
-      const trackInfo = tracks.length > 0 ? tracks.join(', ') : '-';
-      const status = s.ready ? 'Online' : 'Offline';
-      if (s.ready) active++;
-
+    tbody.innerHTML = streams.map(s => {
         return `
             <tr class="hover:bg-gray-50">
                 <td class="px-6 py-4 font-mono text-sm">${escapeHtml(s.name)}</td>
                 <td class="px-6 py-4">
-                    <span class="status-badge ${s.ready ? 'status-online' : 'status-offline'}">
-                        ${status}
+                    <span class="status-badge ${s.state == 'publish' ? 'status-online' : 'status-offline'}">
+                        ${s.state}
                     </span>
                 </td>
                 <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
-                    ${escapeHtml(trackInfo)}
+                    ${escapeHtml(s.type)}
                 </td>
-                <td class="px-6 py-4 text-sm">${formatNumber(s.readers)}</td>
+                <td class="px-6 py-4 text-sm">${escapeHtml(s.remote_addr)}</td>
                 <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_received)}</td>
                 <td class="px-6 py-4 text-sm font-mono">${formatBytes(s.bytes_sent)}</td>
                 <td class="px-6 py-4 text-sm">
@@ -772,7 +758,7 @@ function renderStreams(streams) {
             </tr>
         `;
     }).join('');
-    countEl.textContent = `${active} stream${active !== 1 ? 's' : ''}`;
+    countEl.textContent = `${streams.length} stream${streams.length !== 1 ? 's' : ''}`;
 }
 
 function renderDashboardSessions(sessions) {
@@ -938,11 +924,8 @@ function getPathRuntimeStatus(runtime, configAvailable = true, runtimeAvailable 
             online: false,
         };
     }
-    if (runtime.online) {
+    if (runtime.ready) {
         return { label: 'Online', note: runtime.available ? 'Online and available to readers.' : 'Runtime path is online.', online: true };
-    }
-    if (runtime.available) {
-        return { label: 'Available', note: 'MediaMTX reports this path as available.', online: true };
     }
     return { label: 'Not ready', note: 'The path is configured but is not currently ready.', online: false };
 }
@@ -1714,7 +1697,7 @@ function populateConfigGlobalForm(config) {
 }
 
 function collectConfigGlobalForm() {
-    const form = document.querySelector('#page-config-global');
+    const form = document.querySelector('#page-config-global form');
     if (!form) return {};
 
     const formData = new FormData(form);
@@ -2546,7 +2529,7 @@ function startAutoRefresh() {
     refreshInterval = setInterval(() => {
         if (currentPage === 'path-detail') {
             refreshPathRuntime();
-        } else {
+        } else if (currentPage !== 'config-global') {
             loadPageData(currentPage);
         }
     }, 5000);
