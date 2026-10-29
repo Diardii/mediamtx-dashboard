@@ -1,7 +1,53 @@
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
 import httpx
 from fastapi import HTTPException
 from config import settings
 from responses import StandardResponse
+
+
+_SENSITIVE_QUERY_KEYS = {
+    "access_token",
+    "apikey",
+    "api_key",
+    "authorization",
+    "auth",
+    "password",
+    "passwd",
+    "refresh_token",
+    "secret",
+    "token",
+}
+
+
+def _mask_sensitive_url(value):
+    if not isinstance(value, str):
+        return value
+
+    parts = urlsplit(value)
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"***:***@{netloc.rsplit('@', 1)[1]}"
+
+    query = []
+    for key, item in parse_qsl(parts.query, keep_blank_values=True):
+        normalized_key = key.lower().replace("-", "_")
+        sensitive = normalized_key in _SENSITIVE_QUERY_KEYS or any(
+            marker in normalized_key for marker in ("token", "password", "passwd", "secret", "authorization", "apikey")
+        )
+        query.append((key, "***" if sensitive else item))
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _mask_path_config(config):
+    if not isinstance(config, dict):
+        return config
+
+    safe_config = dict(config)
+    for key in ("source", "sourceRedirect", "fallback"):
+        if key in safe_config:
+            safe_config[key] = _mask_sensitive_url(safe_config[key])
+    return safe_config
 
 
 class MediaMTXClient:
@@ -35,7 +81,10 @@ class MediaMTXClient:
     async def list_paths(self):
         r = await self.client.get(f"{self.base_url}/config/paths/list")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            data["items"] = [_mask_path_config(item) for item in data["items"]]
+        return data
 
     async def create_path(self, name, source, source_on_demand, **kwargs):
         data = {}
@@ -63,11 +112,11 @@ class MediaMTXClient:
         return r.json()
 
     async def get_path(self, name):
-        r = await self.client.get(f"{self.base_url}/config/paths/get/{name}")
+        r = await self.client.get(f"{self.base_url}/config/paths/get/{quote(name, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Path not found")
         r.raise_for_status()
-        return r.json()
+        return _mask_path_config(r.json())
 
     async def update_path(self, name, payload):
         # Map frontend field names to MediaMTX API field names
@@ -85,7 +134,7 @@ class MediaMTXClient:
             if key in field_map and value is not None:
                 mapped[field_map[key]] = value
         r = await self.client.patch(
-            f"{self.base_url}/config/paths/patch/{name}",
+            f"{self.base_url}/config/paths/patch/{quote(name, safe='')}",
             json=mapped,
         )
         if r.status_code == 404:
@@ -94,7 +143,7 @@ class MediaMTXClient:
         return r.json()
 
     async def delete_path(self, name):
-        r = await self.client.delete(f"{self.base_url}/config/paths/delete/{name}")
+        r = await self.client.delete(f"{self.base_url}/config/paths/delete/{quote(name, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Path not found")
         r.raise_for_status()
@@ -132,12 +181,10 @@ class MediaMTXClient:
         }
 
     async def get_stream_detail(self, name):
-        r = await self.client.get(f"{self.base_url}/paths/list")
+        r = await self.client.get(f"{self.base_url}/paths/get/{quote(name, safe='')}")
         r.raise_for_status()
-        data = r.json()
-        items = data.get("items", []) or []
-        stream = next((s for s in items if s.get("name") == name), None)
-        if not stream:
+        stream = r.json()
+        if not isinstance(stream, dict) or stream.get("name") != name:
             raise HTTPException(404, "Stream not found")
         return stream
 

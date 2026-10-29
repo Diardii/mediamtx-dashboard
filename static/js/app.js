@@ -3,7 +3,10 @@
 const API_BASE = '/api';
 let refreshInterval = null;
 let currentPage = 'dashboard';
+let currentPathName = null;
+let currentRoute = '';
 let sidebarCollapsed = false;
+let pathHlsPlayer = null;
 
 // --- Utility Functions ---
 
@@ -40,7 +43,9 @@ async function fetchAPI(endpoint, options = {}) {
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ message: 'Request failed' }));
-        throw new Error(err.message || `HTTP ${res.status}`);
+        const error = new Error(err.message || `HTTP ${res.status}`);
+        error.status = res.status;
+        throw error;
     }
     return res.json();
 }
@@ -61,6 +66,13 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function containsMaskedCredentials(value) {
+    return typeof value === 'string' && (
+        value.includes(':***@') ||
+        /(?:token|password|passwd|secret|authorization|auth|api[_-]?key)=[^&]*(?:%2A|\*){3}/i.test(value)
+    );
 }
 
 // --- Sidebar Functions ---
@@ -133,14 +145,32 @@ const pageTitleMap = {
 
 function getPageFromHash() {
     const hash = window.location.hash.slice(1);
-    return hash || 'dashboard';
+    return hash.split('/')[0] || 'dashboard';
 }
 
-async function navigateToPage(page) {
-    const knownPages = ['dashboard', 'paths', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs', 'config-paths'];
+function getPathNameFromHash() {
+    if (getPageFromHash() !== 'path-detail') return null;
+
+    try {
+        return decodeURIComponent(window.location.hash.slice(1).slice('path-detail/'.length));
+    } catch {
+        return null;
+    }
+}
+
+async function navigateToPage(page, pathName = null) {
+    const knownPages = ['dashboard', 'paths', 'path-detail', 'config-global', 'config-defaults', 'runtime-hls', 'runtime-rtsp', 'runtime-rtmp', 'runtime-logs', 'config-paths'];
     const template = knownPages.includes(page) ? page : 'placeholder';
     const content = document.getElementById('page-content');
 
+    if (page !== 'path-detail' || pathName !== currentPathName) {
+        pathDetailState = null;
+        pathDetailLoadId++;
+    }
+    if (pathHlsPlayer && (page !== 'path-detail' || pathName !== currentPathName)) {
+        pathHlsPlayer.destroy();
+        pathHlsPlayer = null;
+    }
     content.innerHTML = '<div class="flex items-center justify-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>';
 
     try {
@@ -158,9 +188,15 @@ async function navigateToPage(page) {
         
         // Update UI state
         document.querySelectorAll('.nav-link').forEach(link => {
-            link.classList.toggle('nav-active', link.dataset.page === page);
+            link.classList.toggle(
+                'nav-active',
+                link.dataset.page === page || (page === 'path-detail' && link.dataset.page === 'paths'),
+            );
         });
-        document.getElementById('page-title').textContent = pageTitleMap[page] || 'Dashboard';
+        currentPathName = page === 'path-detail' ? pathName : null;
+        document.getElementById('page-title').textContent = page === 'path-detail'
+            ? (pathName || 'Path Detail')
+            : pageTitleMap[page] || 'Dashboard';
         
         currentPage = page;
         await loadPageData(page);
@@ -172,11 +208,41 @@ async function navigateToPage(page) {
 
 function bindPageEvents(page) {
     if (page === 'paths') {
-        document.getElementById('add-path-btn')?.addEventListener('click', () => {
-            openPathModal();
-        });
         document.getElementById('paths-search')?.addEventListener('input', () => {
             renderPaths(allPaths);
+        });
+        document.getElementById('paths-table-body')?.addEventListener('click', event => {
+            const button = event.target.closest?.('button[data-path-action]');
+            if (!button) return;
+            const name = button.dataset.pathName;
+            if (button.dataset.pathAction === 'detail') {
+                window.location.hash = `#path-detail/${encodeURIComponent(name)}`;
+            }
+            if (button.dataset.pathAction === 'edit') window.editPath(name);
+            if (button.dataset.pathAction === 'delete') window.deletePath(name);
+        });
+    }
+    if (page === 'path-detail') {
+        document.getElementById('path-detail-test')?.addEventListener('click', testPathPreview);
+        document.getElementById('path-detail-copy-all')?.addEventListener('click', copyAllPathOutputUrls);
+        document.getElementById('path-detail-edit')?.addEventListener('click', () => {
+                if (currentPathName && pathDetailState?.configAvailable) window.editPath(currentPathName);
+        });
+        document.getElementById('path-detail-delete')?.addEventListener('click', deleteCurrentPath);
+        document.getElementById('path-detail-copy-source')?.addEventListener('click', copyPathSource);
+        document.getElementById('path-detail-video')?.addEventListener('playing', () => {
+            document.getElementById('path-detail-preview-status').textContent = 'Stream playback started.';
+            document.getElementById('path-detail-live').classList.remove('hidden');
+            document.getElementById('path-detail-preview-empty').classList.add('hidden');
+        });
+        document.getElementById('path-detail-video')?.addEventListener('error', event => {
+            if (!event.currentTarget.currentSrc) return;
+            const webRtc = pathDetailState?.outputUrls.find(output => output.label === 'WebRTC');
+            if (webRtc) {
+                openPathWebRtcPreview(webRtc);
+            } else {
+                setPathPreviewMessage('The HLS stream could not be loaded. Check stream readiness and network access.');
+            }
         });
     }
     if (page === 'config-global') {
@@ -209,9 +275,10 @@ function bindPageEvents(page) {
 }
 
 function handleHashChange() {
-    const page = getPageFromHash();
-    if (page !== currentPage) {
-        navigateToPage(page);
+    const route = window.location.hash;
+    if (route !== currentRoute) {
+        currentRoute = route;
+        navigateToPage(getPageFromHash(), getPathNameFromHash());
     }
 }
 
@@ -224,6 +291,9 @@ async function loadPageData(page) {
             break;
         case 'paths':
             await loadPaths();
+            break;
+        case 'path-detail':
+            await loadPathDetail(currentPathName);
             break;
         case 'config-global':
             await loadConfigGlobal();
@@ -519,11 +589,446 @@ function renderPaths(paths) {
             </td>
             <td class="px-6 py-4 text-sm">${formatNumber(Array.isArray(p.readers) ? p.readers.length : 0)}</td>
             <td class="px-6 py-4">
-                <button onclick="editPath('${escapeHtml(p.name)}')" class="btn-icon btn-primary mr-2">Edit</button>
-                <button onclick="deletePath('${escapeHtml(p.name)}')" class="btn-icon btn-danger">Delete</button>
+                <button data-path-action="detail" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-primary mr-2">Detail</button>
+                <button data-path-action="edit" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-primary mr-2">Edit</button>
+                <button data-path-action="delete" data-path-name="${escapeHtml(p.name)}" class="btn-icon btn-danger">Delete</button>
             </td>
         </tr>
     `).join('');
+}
+
+// --- Path Detail ---
+
+let pathDetailState = null;
+let pathDetailLoadId = 0;
+
+async function loadPathDetail(pathName) {
+    const errorEl = document.getElementById('path-detail-error');
+    const contentEl = document.getElementById('path-detail-content');
+    if (!pathName) {
+        contentEl?.classList.add('hidden');
+        errorEl.textContent = 'A path name is required to open this page.';
+        errorEl.classList.remove('hidden');
+        return;
+    }
+
+    const loadId = ++pathDetailLoadId;
+    document.getElementById('path-detail-name').textContent = pathName;
+    document.getElementById('path-detail-summary-name').textContent = pathName;
+    errorEl.classList.add('hidden');
+    contentEl.classList.remove('hidden');
+    pathDetailState = null;
+
+    const [configResult, runtimeResult, serverConfigResult] = await Promise.allSettled([
+        fetchAPI(`/paths/${encodeURIComponent(pathName)}`),
+        fetchAPI(`/streams/${encodeURIComponent(pathName)}`),
+        fetchAPI('/server/config'),
+    ]);
+    if (loadId !== pathDetailLoadId || currentPage !== 'path-detail' || currentPathName !== pathName) return;
+
+    const configNotFound = configResult.status === 'rejected' && configResult.reason.status === 404;
+    const runtimeAvailable = runtimeResult.status === 'fulfilled' && runtimeResult.value.success;
+    const configAvailable = configResult.status === 'fulfilled' && configResult.value.success;
+
+    if (!runtimeAvailable && !configAvailable) {
+        contentEl.classList.add('hidden');
+        errorEl.textContent = runtimeResult.status === 'rejected'
+            ? `Unable to load runtime path: ${runtimeResult.reason.message}`
+            : configResult.status === 'rejected'
+                ? `Unable to load path configuration: ${configResult.reason.message}`
+                : runtimeResult.value.message || 'MediaMTX did not return this path.';
+        errorEl.classList.remove('hidden');
+        setConnectionStatus(false);
+        return;
+    }
+
+    const config = configAvailable ? configResult.value.data : {};
+    if (!configAvailable && configResult.status === 'rejected' && !configNotFound) {
+        showError(`path configuration: ${configResult.reason.message}`);
+    } else if (!configAvailable && configResult.status === 'fulfilled' && !configResult.value.success) {
+        showError(`path configuration: ${configResult.value.message || 'MediaMTX returned an unsuccessful configuration response'}`);
+    }
+
+    pathDetailState = {
+        name: pathName,
+        config: { ...config, name: config.name || pathName },
+        configAvailable,
+        runtimeAvailable,
+        runtime: runtimeAvailable ? runtimeResult.value.data : null,
+        runtimeError: runtimeAvailable
+            ? null
+            : runtimeResult.status === 'rejected'
+                ? runtimeResult.reason.message
+                : runtimeResult.value.message || 'MediaMTX did not return this runtime path.',
+        serverConfig: serverConfigResult.status === 'fulfilled' && serverConfigResult.value.success
+            ? serverConfigResult.value.data
+            : null,
+        outputUrls: [],
+    };
+    renderPathDetail();
+    setConnectionStatus(true);
+    if (!runtimeAvailable) {
+        showPathNotice(`Configuration is available, but runtime status could not be loaded: ${pathDetailState.runtimeError}`, 'warning');
+    } else if (!configAvailable) {
+        showPathNotice(configNotFound
+            ? 'This path exists at runtime but has no specific path configuration. Configuration editing and deletion are unavailable.'
+            : 'Runtime details are available, but its path configuration could not be loaded.', 'warning');
+    } else if (serverConfigResult.status === 'rejected' || !serverConfigResult.value.success) {
+        const message = serverConfigResult.status === 'rejected'
+            ? serverConfigResult.reason.message
+            : serverConfigResult.value.message || 'MediaMTX returned an unsuccessful configuration response';
+        showPathNotice(`Server protocol configuration is unavailable: ${message}`, 'warning');
+    }
+}
+
+function getPathRuntimeStatus(runtime, configAvailable = true, runtimeAvailable = true) {
+    if (!runtime) {
+        if (!runtimeAvailable) {
+            return { label: 'Runtime unavailable', note: 'The path configuration is available, but MediaMTX runtime status could not be loaded.', online: false };
+        }
+        return {
+            label: configAvailable ? 'Configured · inactive' : 'Not found',
+            note: configAvailable
+                ? 'Configuration exists, but this path is not currently in the runtime list.'
+                : 'No path configuration or runtime entry is available.',
+            online: false,
+        };
+    }
+    if (runtime.online) {
+        return { label: 'Online', note: runtime.available ? 'Online and available to readers.' : 'Runtime path is online.', online: true };
+    }
+    if (runtime.available) {
+        return { label: 'Available', note: 'MediaMTX reports this path as available.', online: true };
+    }
+    return { label: 'Not ready', note: 'The path is configured but is not currently ready.', online: false };
+}
+
+function getPathSource(config, runtime) {
+    const source = config.source;
+    const runtimeSource = runtime?.source;
+    const runtimeSourceType = typeof runtimeSource?.type === 'string'
+        ? runtimeSource.type
+            .replace(/(source|session)$/i, '')
+            .replace(/^rtsp$/i, 'RTSP')
+            .replace(/^rtmp$/i, 'RTMP')
+            .replace(/^hls$/i, 'HLS')
+            .replace(/^webrtc$/i, 'WebRTC')
+        : null;
+    const configSourceType = typeof source === 'object' && source !== null
+        ? source.type?.replace(/source$/i, '')
+        : null;
+    let type = 'Publisher';
+    let url = null;
+    let note = 'MediaMTX is waiting for a publisher on this path.';
+
+    if (typeof source === 'string' && source.toLowerCase() === 'redirect') {
+        type = 'Redirect';
+        url = config.sourceRedirect || null;
+        note = url ? 'Readers are redirected to the configured target.' : 'No redirect target is configured.';
+    } else if (typeof source === 'string' && source && source.toLowerCase() !== 'publisher') {
+        const protocol = source.match(/^([a-z][a-z0-9+.-]*):\/\//i)?.[1];
+        type = protocol ? protocol.toUpperCase() : 'Configured source';
+        url = source;
+        note = 'This source URL is configured as the upstream input to MediaMTX.';
+    } else if (runtimeSourceType || configSourceType) {
+        type = runtimeSourceType || configSourceType;
+        note = 'Source type is reported by MediaMTX runtime.';
+    }
+
+    const runtimeSourceId = typeof runtimeSource?.id === 'string' ? runtimeSource.id : null;
+    const displayValue = url || (runtimeSourceId ? `Runtime source ID: ${runtimeSourceId}` : null);
+    if (!url && runtimeSourceId) {
+        note = 'The runtime API provides a source identifier, but not the configured source URL.';
+    }
+
+    return { type, url, runtimeSourceId, displayValue, note };
+}
+
+function encodePathSegments(pathName) {
+    return pathName.split('/').map(segment => encodeURIComponent(segment)).join('/');
+}
+
+function getListenerUrl(address, scheme, pathName, suffix = '') {
+    if (typeof address !== 'string' || !address.trim()) return null;
+    const match = address.trim().match(/^(?:\[([^\]]+)\]|([^:]*)):(\d+)$/);
+    if (!match) return null;
+
+    const bindHost = match[1] || match[2] || '';
+    const port = match[3];
+    const normalizedBindHost = bindHost.toLowerCase();
+    const isWildcardOrLocal = !bindHost ||
+        ['0.0.0.0', '::', '::1', 'localhost', '127.0.0.1'].includes(normalizedBindHost) ||
+        normalizedBindHost.startsWith('127.');
+    const host = isWildcardOrLocal ? window.location.hostname : bindHost;
+    if (!host) return null;
+
+    const formattedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return `${scheme}://${formattedHost}:${port}/${encodePathSegments(pathName)}${suffix}`;
+}
+
+function getPathOutputUrls(serverConfig, pathName) {
+    if (!serverConfig) return [];
+    const outputs = [];
+    const addOutput = (label, url, vlcCompatible = false) => {
+        if (url) outputs.push({ label, url, vlcCompatible });
+    };
+
+    if (!serverConfig.rtspEncryption || serverConfig.rtspEncryption !== 'strict') {
+        addOutput('RTSP', getListenerUrl(serverConfig.rtspAddress, 'rtsp', pathName), true);
+    }
+
+    const rtmpEncryption = serverConfig.rtmpEncryption || 'no';
+    if (serverConfig.rtmp === true && rtmpEncryption !== 'strict') {
+        addOutput('RTMP', getListenerUrl(serverConfig.rtmpAddress, 'rtmp', pathName), true);
+    }
+
+    if (serverConfig.hls === true) {
+        const scheme = serverConfig.hlsEncryption === true ? 'https' : 'http';
+        addOutput('HLS', getListenerUrl(serverConfig.hlsAddress, scheme, pathName, '/index.m3u8'), true);
+    }
+
+    if (serverConfig.webrtc === true) {
+        const scheme = serverConfig.webrtcEncryption === true ? 'https' : 'http';
+        addOutput('WebRTC', getListenerUrl(serverConfig.webrtcAddress, scheme, pathName));
+    }
+    return outputs;
+}
+
+function renderPathDetail() {
+    if (!pathDetailState) return;
+    const { name, config, configAvailable, runtime, serverConfig } = pathDetailState;
+    const status = getPathRuntimeStatus(runtime, configAvailable, pathDetailState.runtimeAvailable);
+    const source = getPathSource(config, runtime);
+    const outputs = getPathOutputUrls(serverConfig, name);
+    pathDetailState.outputUrls = outputs;
+
+    document.getElementById('path-detail-name').textContent = name;
+    document.getElementById('path-detail-summary-name').textContent = name;
+    document.getElementById('path-detail-status').textContent = status.label;
+    document.getElementById('path-detail-status').className = `status-badge ${status.online ? 'status-online' : 'status-offline'}`;
+    document.getElementById('path-detail-summary-status').textContent = status.label;
+    document.getElementById('path-detail-summary-status').className = `mt-2 text-lg font-semibold ${status.online ? 'text-green-700' : 'text-gray-900'}`;
+    document.getElementById('path-detail-runtime-note').textContent = status.note;
+    document.getElementById('path-detail-summary-source').textContent = source.type;
+    document.getElementById('path-detail-source-type').textContent = source.type;
+    document.getElementById('path-detail-source-url').textContent = source.displayValue || 'Not provided';
+    document.getElementById('path-detail-source-note').textContent = containsMaskedCredentials(source.url)
+        ? 'Credentials in this source URL are masked and are not copied as secrets.'
+        : source.note;
+    document.getElementById('path-detail-copy-source').disabled = !source.url;
+    document.getElementById('path-detail-edit').disabled = !configAvailable;
+    document.getElementById('path-detail-delete').disabled = !configAvailable;
+    document.getElementById('path-detail-edit').title = configAvailable
+        ? ''
+        : 'No specific path configuration is available to edit.';
+    document.getElementById('path-detail-delete').title = configAvailable
+        ? ''
+        : 'No specific path configuration is available to delete.';
+    document.getElementById('path-detail-copy-all').disabled = outputs.length === 0;
+    renderPathOutputRows(outputs);
+}
+
+function renderPathOutputRows(outputs) {
+    const container = document.getElementById('path-detail-outputs');
+    const protocols = ['RTSP', 'RTMP', 'HLS', 'WebRTC'];
+    const configured = new Map(outputs.map(output => [output.label, output]));
+
+    container.innerHTML = protocols.map(protocol => {
+        const output = configured.get(protocol);
+        return `
+            <div class="min-w-0 rounded-lg border border-gray-200 p-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-semibold text-gray-900">${protocol}</span>
+                            <span class="rounded-full ${output ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'} px-2 py-0.5 text-xs">${output ? 'Configured' : 'Not available'}</span>
+                        </div>
+                        <p class="mt-2 break-all font-mono text-xs ${output ? 'text-gray-700' : 'text-gray-400'}">${output ? escapeHtml(output.url) : 'Listener disabled or address not configured'}</p>
+                    </div>
+                    ${output ? `<button class="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50" data-copy-output="${escapeHtml(output.label)}">Copy</button>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.querySelectorAll('[data-copy-output]').forEach(button => {
+        button.addEventListener('click', () => copyPathOutputUrl(button.dataset.copyOutput));
+    });
+}
+
+async function refreshPathRuntime() {
+    if (!pathDetailState) return;
+    const state = pathDetailState;
+    try {
+        const response = await fetchAPI(`/streams/${encodeURIComponent(state.name)}`);
+        if (!response.success) throw new Error(response.message || 'Failed to load runtime path');
+        if (pathDetailState !== state || currentPage !== 'path-detail') return;
+        state.runtime = response.data;
+        state.runtimeAvailable = true;
+        state.runtimeError = null;
+        const status = getPathRuntimeStatus(state.runtime, state.configAvailable, true);
+        document.getElementById('path-detail-status').textContent = status.label;
+        document.getElementById('path-detail-status').className = `status-badge ${status.online ? 'status-online' : 'status-offline'}`;
+        document.getElementById('path-detail-summary-status').textContent = status.label;
+        document.getElementById('path-detail-summary-status').className = `mt-2 text-lg font-semibold ${status.online ? 'text-green-700' : 'text-gray-900'}`;
+        document.getElementById('path-detail-runtime-note').textContent = status.note;
+        setConnectionStatus(true);
+    } catch (error) {
+        if (pathDetailState !== state || currentPage !== 'path-detail') return;
+        showError(`path runtime: ${error.message}`);
+        setConnectionStatus(false);
+    }
+}
+
+function showPathNotice(message, type = 'success') {
+    const notice = document.getElementById('path-detail-notice');
+    if (!notice) return;
+    notice.textContent = message;
+    notice.className = `mt-3 rounded-lg border px-4 py-3 text-sm ${
+        type === 'warning'
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
+            : 'border-green-200 bg-green-50 text-green-800'
+    }`;
+}
+
+async function copyPathText(text, label) {
+    try {
+        await navigator.clipboard.writeText(text);
+        showPathNotice(`${label} copied to clipboard.`);
+    } catch (error) {
+        showPathNotice(`Could not copy ${label.toLowerCase()}: ${error.message}`, 'warning');
+    }
+}
+
+function copyPathSource() {
+    const source = getPathSource(pathDetailState.config, pathDetailState.runtime);
+    if (source.url) copyPathText(source.url, containsMaskedCredentials(source.url) ? 'Masked source URL' : 'Source URL');
+}
+
+function copyPathOutputUrl(label) {
+    const output = pathDetailState?.outputUrls.find(item => item.label === label);
+    if (output) copyPathText(output.url, `${label} URL`);
+}
+
+function copyAllPathOutputUrls() {
+    const outputs = pathDetailState?.outputUrls || [];
+    if (outputs.length) {
+        copyPathText(outputs.map(output => `${output.label}: ${output.url}`).join('\n'), 'Available output URLs');
+    }
+}
+
+function setPathPreviewMessage(message) {
+    const video = document.getElementById('path-detail-video');
+    const webRtcFrame = document.getElementById('path-detail-webrtc');
+    if (pathHlsPlayer) {
+        pathHlsPlayer.destroy();
+        pathHlsPlayer = null;
+    }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.classList.add('hidden');
+    webRtcFrame.src = 'about:blank';
+    webRtcFrame.classList.add('hidden');
+    document.getElementById('path-detail-preview-empty').classList.remove('hidden');
+    document.getElementById('path-detail-preview-status').textContent = message;
+    document.getElementById('path-detail-live').classList.add('hidden');
+}
+
+function openPathWebRtcPreview(output) {
+    const video = document.getElementById('path-detail-video');
+    const webRtcFrame = document.getElementById('path-detail-webrtc');
+    if (pathHlsPlayer) {
+        pathHlsPlayer.destroy();
+        pathHlsPlayer = null;
+    }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.classList.add('hidden');
+    document.getElementById('path-detail-preview-empty').classList.add('hidden');
+    webRtcFrame.src = output.url;
+    webRtcFrame.classList.remove('hidden');
+    document.getElementById('path-detail-preview-status').textContent =
+        'Opening the MediaMTX WebRTC player. Playback status is shown by the embedded player.';
+    document.getElementById('path-detail-live').classList.add('hidden');
+}
+
+async function testPathPreview() {
+    document.getElementById('path-detail-preview').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const hls = pathDetailState?.outputUrls.find(output => output.label === 'HLS');
+    const webRtc = pathDetailState?.outputUrls.find(output => output.label === 'WebRTC');
+    const video = document.getElementById('path-detail-video');
+    const webRtcFrame = document.getElementById('path-detail-webrtc');
+    if (pathHlsPlayer) {
+        pathHlsPlayer.destroy();
+        pathHlsPlayer = null;
+    }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.classList.add('hidden');
+    webRtcFrame.src = 'about:blank';
+    webRtcFrame.classList.add('hidden');
+    document.getElementById('path-detail-live').classList.add('hidden');
+    const nativeHls = Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
+    const hlsJsAvailable = Boolean(window.Hls && window.Hls.isSupported());
+
+    if (!hls || (!nativeHls && !hlsJsAvailable)) {
+        if (webRtc) {
+            openPathWebRtcPreview(webRtc);
+            return;
+        }
+        setPathPreviewMessage(hls
+            ? 'This browser has no supported HLS player. RTSP/RTMP cannot be played directly in a browser video element.'
+            : 'Preview unavailable: HLS and WebRTC are not enabled or their listener addresses are not configured.');
+        return;
+    }
+
+    document.getElementById('path-detail-preview-status').textContent = 'Loading HLS stream...';
+    document.getElementById('path-detail-preview-empty').classList.add('hidden');
+    video.classList.remove('hidden');
+    if (nativeHls) {
+        video.src = hls.url;
+        video.load();
+        try {
+            await video.play();
+        } catch (error) {
+            setPathPreviewMessage(`Unable to start playback: ${error.message}`);
+        }
+        return;
+    }
+
+    pathHlsPlayer = new window.Hls();
+    pathHlsPlayer.loadSource(hls.url);
+    pathHlsPlayer.attachMedia(video);
+    pathHlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, async () => {
+        try {
+            await video.play();
+        } catch (error) {
+            setPathPreviewMessage(`Unable to start playback: ${error.message}`);
+        }
+    });
+    pathHlsPlayer.on(window.Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+            if (webRtc) {
+                openPathWebRtcPreview(webRtc);
+            } else {
+                setPathPreviewMessage('The HLS player could not load this stream. Check stream readiness and network access.');
+            }
+        }
+    });
+}
+
+async function deleteCurrentPath() {
+    if (!pathDetailState?.configAvailable || !confirm(`Delete path "${pathDetailState.name}"?`)) return;
+    try {
+        const response = await fetchAPI(`/paths/${encodeURIComponent(pathDetailState.name)}`, { method: 'DELETE' });
+        if (!response.success) throw new Error(response.message || 'MediaMTX did not confirm path deletion');
+        window.location.hash = '#paths';
+    } catch (error) {
+        showPathNotice(`Failed to delete path: ${error.message}`, 'warning');
+    }
 }
 
 // --- Path Modal (Add/Edit) ---
@@ -1133,13 +1638,13 @@ form?.addEventListener('submit', async (e) => {
             delete editPayload.source_type;
             
             // If source is a masked password, don't send it
-            if (editPayload.source && editPayload.source.includes(':***@')) {
+            if (containsMaskedCredentials(editPayload.source)) {
                 delete editPayload.source;
             }
-            if (editPayload.source_redirect && editPayload.source_redirect.includes(':***@')) {
+            if (containsMaskedCredentials(editPayload.source_redirect)) {
                 delete editPayload.source_redirect;
             }
-            if (editPayload.fallback && editPayload.fallback.includes(':***@')) {
+            if (containsMaskedCredentials(editPayload.fallback)) {
                 delete editPayload.fallback;
             }
             
@@ -1156,10 +1661,12 @@ form?.addEventListener('submit', async (e) => {
         }
         modal.classList.add('hidden');
         modal.classList.remove('flex');
-        loadPaths();
-        // Also refresh config-paths if that's the current page
-        if (currentPage === 'config-paths') {
+        if (currentPage === 'paths') {
+            await loadPaths();
+        } else if (currentPage === 'config-paths') {
             loadConfigPaths();
+        } else if (currentPage === 'path-detail') {
+            await loadPathDetail(currentPathName);
         }
     } catch (e) {
         showError(e.message);
@@ -1720,7 +2227,11 @@ function renderLogs(logs) {
 function startAutoRefresh() {
     stopAutoRefresh();
     refreshInterval = setInterval(() => {
-        loadPageData(currentPage);
+        if (currentPage === 'path-detail') {
+            refreshPathRuntime();
+        } else {
+            loadPageData(currentPage);
+        }
     }, 5000);
 }
 
@@ -1743,7 +2254,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initial page load
     const initialPage = getPageFromHash();
-    navigateToPage(initialPage);
+    currentRoute = window.location.hash;
+    navigateToPage(initialPage, getPathNameFromHash());
     
     startAutoRefresh();
 });

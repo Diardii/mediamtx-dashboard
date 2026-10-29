@@ -118,13 +118,13 @@ async def create_path(
     return StandardResponse.success(data, "Path created")
 
 
-@app.get("/api/paths/{name}")
+@app.get("/api/paths/{name:path}")
 async def get_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_path(name)
     return StandardResponse.success(data, "Path details")
 
 
-@app.patch("/api/paths/{name}")
+@app.patch("/api/paths/{name:path}")
 async def update_path(
     name: str, payload: PathPatchRequest, client: MediaMTXClient = Depends(get_mediamtx_client)
 ):
@@ -134,7 +134,7 @@ async def update_path(
     return StandardResponse.success(data, "Path updated")
 
 
-@app.delete("/api/paths/{name}")
+@app.delete("/api/paths/{name:path}")
 async def delete_path(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     await client.delete_path(name)
     return StandardResponse.success(None, "Path deleted")
@@ -154,7 +154,7 @@ async def streams_summary(client: MediaMTXClient = Depends(get_mediamtx_client))
     return StandardResponse.success(data, "Streams summary")
 
 
-@app.get("/api/streams/{name}")
+@app.get("/api/streams/{name:path}")
 async def stream_detail(name: str, client: MediaMTXClient = Depends(get_mediamtx_client)):
     data = await client.get_stream_detail(name)
     return StandardResponse.success(data, "Stream details")
