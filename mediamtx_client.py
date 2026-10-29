@@ -268,21 +268,20 @@ class MediaMTXClient:
         }
 
     async def get_stream_detail(self, name):
-        r = await self.client.get(f"{self.base_url}/paths/get/{quote(name, safe='')}")
+        encoded_name = quote(name, safe="")
+        url = f"{self.base_url}/paths/get/{encoded_name}"
+
+        print(f"nama {url}",flush=True)
+        r = await self.client.get(url)
         r.raise_for_status()
         data = r.json()
-        items = data.get("items", []) or []
-        s = next((s for s in items if s.get("name") == name), None)
-        if not s:
-            raise HTTPException(404, "Stream not found")
-
         return {
-            "name": s.get("name"),
-            "ready": s.get("ready"),
-            "tracks": s.get("tracks") or [],
-            "readers": len(s.get("readers", [])) if isinstance(s.get("readers"), list) else 0,
-            "bytes_received": s.get("bytesReceived", 0),
-            "bytes_sent": s.get("bytesSent", 0)
+            "name": data.get("name"),
+            "ready": data.get("ready"),
+            "tracks": data.get("tracks") or [],
+            "readers": len(data.get("readers", [])) if isinstance(data.get("readers"), list) else 0,
+            "bytes_received": data.get("bytesReceived", 0),
+            "bytes_sent": data.get("bytesSent", 0)
         }
 
     # --- Sessions ---
@@ -339,7 +338,7 @@ class MediaMTXClient:
             ("srt", "srt/sessions/list"),
             ("moq", "moq/sessions/list"),
         ]
-        
+
         all_sessions = []
         for proto, endpoint in protocols:
             try:
@@ -357,7 +356,7 @@ class MediaMTXClient:
             except httpx.HTTPError:
                 # Protocol endpoint not available or error, skip
                 continue
-        
+
         return {"items": all_sessions}
 
     def _normalize_session(self, item, proto):
@@ -367,13 +366,13 @@ class MediaMTXClient:
         session_id = item.get("id") or item.get("ID")
         if not session_id:
             return None
-        
+
         path = item.get("path") or item.get("Path") or "-"
         remote_addr = item.get("remoteAddr") or item.get("remote_addr") or item.get("RemoteAddr") or "-"
         bytes_received = item.get("bytesReceived") or item.get("bytes_received") or item.get("BytesReceived") or 0
         bytes_sent = item.get("bytesSent") or item.get("bytes_sent") or item.get("BytesSent") or 0
         ready = item.get("ready") or item.get("Ready") or False
-        
+
         return {
             "id": session_id,
             "type": proto,
