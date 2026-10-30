@@ -451,10 +451,6 @@ async function navigateToPage(page, pathName = null) {
 
         content.innerHTML = await response.text();
 
-        if (template === 'placeholder') {
-            document.getElementById('placeholder-title').textContent = pageTitleMap[page] || page;
-        }
-
         // Re-bind events for the newly loaded content
         bindPageEvents(page);
 
@@ -843,7 +839,6 @@ async function loadPathDetail(pathName) {
     }
 
     const loadId = ++pathDetailLoadId;
-    document.getElementById('path-detail-name').textContent = pathName;
     document.getElementById('path-detail-summary-name').textContent = pathName;
     errorEl.classList.add('hidden');
     contentEl.classList.remove('hidden');
@@ -1029,7 +1024,6 @@ function renderPathDetail() {
     const outputs = getPathOutputUrls(serverConfig, name);
     pathDetailState.outputUrls = outputs;
 
-    document.getElementById('path-detail-name').textContent = name;
     document.getElementById('path-detail-summary-name').textContent = name;
     document.getElementById('path-detail-status').textContent = status.label;
     document.getElementById('path-detail-status').className = `status-badge ${status.online ? 'status-online' : 'status-offline'}`;
@@ -1613,16 +1607,14 @@ function populateConfigGlobalForm(config) {
         }
     });
 
-    // Multi-select fields
+    // Multi-select fields (checkbox cards)
     ['logDestinations', 'rtspTransports'].forEach(name => {
-        const el = form.querySelector(`[name="${name}"]`);
-        if (el) {
-            const value = getNestedValue(config, name);
-            if (Array.isArray(value)) {
-                Array.from(el.options).forEach(opt => {
-                    opt.selected = value.includes(opt.value);
-                });
-            }
+        const checkboxes = form.querySelectorAll(`[name="${name}"][type="checkbox"]`);
+        const value = getNestedValue(config, name);
+        if (Array.isArray(value)) {
+            checkboxes.forEach(cb => {
+                cb.checked = value.includes(cb.value);
+            });
         }
     });
 
@@ -1710,15 +1702,12 @@ function collectConfigGlobalForm() {
         }
     }
 
-    // Handle multi-selects that FormData doesn't capture well
+    // Handle multi-selects (checkbox cards)
     ['logDestinations', 'rtspTransports'].forEach(name => {
-        const el = form.querySelector(`[name="${name}"]`);
-        if (el) {
-            const selected = Array.from(el.selectedOptions).map(o => o.value);
-            if (selected.length > 0) {
-                setNestedValue(updates, name, selected);
-            }
-        }
+        const checkboxes = form.querySelectorAll(`[name="${name}"][type="checkbox"]`);
+        const selected = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+        // Always set the value, even if empty array, to allow clearing the setting
+        setNestedValue(updates, name, selected);
     });
 
     // Handle comma-separated fields
@@ -1763,7 +1752,7 @@ async function saveConfigGlobalForm() {
     } finally {
         statusEl.classList.remove('hidden');
         btn.disabled = false;
-        btn.textContent = 'Save Form';
+        btn.textContent = 'Save Config';
     }
 }
 
@@ -2548,6 +2537,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 document.addEventListener('DOMContentLoaded', () => {
     initSidebar();
     initPathModalEvents();
+    initTooltips();
 
     // Handle hash changes
     window.addEventListener('hashchange', handleHashChange);
@@ -2562,3 +2552,101 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', stopAutoRefresh);
+
+function initTooltips() {
+    const tooltip = document.createElement('div');
+    tooltip.id = 'global-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.className = 'fixed z-50 hidden max-w-xs rounded bg-gray-900 px-3 py-2 text-xs text-white shadow-lg';
+    tooltip.style.pointerEvents = 'none';
+    document.body.appendChild(tooltip);
+
+    let activeTrigger = null;
+    let pinnedTrigger = null;
+
+    function showTooltip(trigger) {
+        if (!trigger?.dataset.tooltip) return;
+
+        activeTrigger = trigger;
+        tooltip.textContent = trigger.dataset.tooltip;
+        tooltip.classList.remove('hidden');
+        trigger.setAttribute('aria-describedby', tooltip.id);
+        trigger.setAttribute('aria-expanded', 'true');
+
+        const bounds = trigger.getBoundingClientRect();
+        const left = Math.min(
+            Math.max(8, bounds.left + bounds.width / 2 - tooltip.offsetWidth / 2),
+            window.innerWidth - tooltip.offsetWidth - 8,
+        );
+        const above = bounds.top - tooltip.offsetHeight - 8;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${above >= 8 ? above : bounds.bottom + 8}px`;
+    }
+
+    function hideTooltip() {
+        activeTrigger?.removeAttribute('aria-describedby');
+        activeTrigger?.setAttribute('aria-expanded', 'false');
+        activeTrigger = null;
+        pinnedTrigger = null;
+        tooltip.classList.add('hidden');
+    }
+
+    document.addEventListener('pointerover', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger && !trigger.contains(event.relatedTarget) && !pinnedTrigger) {
+            showTooltip(trigger);
+        }
+    });
+
+    document.addEventListener('pointerout', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger && !trigger.contains(event.relatedTarget) && trigger !== pinnedTrigger) {
+            hideTooltip();
+        }
+    });
+
+    document.addEventListener('focusin', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger && !pinnedTrigger) showTooltip(trigger);
+    });
+
+    document.addEventListener('focusout', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger && trigger !== pinnedTrigger) hideTooltip();
+    });
+
+    document.addEventListener('click', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (trigger === pinnedTrigger) {
+                hideTooltip();
+            } else {
+                pinnedTrigger = trigger;
+                showTooltip(trigger);
+            }
+        } else if (pinnedTrigger) {
+            hideTooltip();
+        }
+    });
+
+    document.addEventListener('keydown', event => {
+        const trigger = event.target.closest('[data-tooltip]');
+        if (trigger && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            trigger.click();
+        } else if (event.key === 'Escape' && activeTrigger) {
+            const triggerToRefocus = pinnedTrigger || activeTrigger;
+            hideTooltip();
+            triggerToRefocus.focus();
+        }
+    });
+
+    window.addEventListener('scroll', () => {
+        if (activeTrigger) showTooltip(activeTrigger);
+    }, true);
+    window.addEventListener('resize', () => {
+        if (activeTrigger) showTooltip(activeTrigger);
+    });
+}
