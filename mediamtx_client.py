@@ -393,10 +393,25 @@ class MediaMTXClient:
         return {"items": normalized}
 
     async def get_streams_summary(self):
-        r = await self.client.get(f"{self.base_url}/paths/list")
-        r.raise_for_status()
-        data = r.json()
-        items = data.get("items", []) or []
+        items = []
+        page = 0
+
+        async def fetching(page):
+            r = await self.client.get(f"{self.base_url}/paths/list",
+                params={"page": page, "itemsPerPage": 100})
+            r.raise_for_status()
+            data = r.json()
+            return data
+
+        while True:
+            datas = await fetching(page)
+            page += 1
+            page_items = datas.get("items", []) if isinstance(datas, dict) else []
+
+            if page_items :
+                items.extend(page_items)
+            else:
+                break;
 
         def safe_int(val):
             if isinstance(val, int): return val
@@ -404,6 +419,7 @@ class MediaMTXClient:
             return 0
 
         online = sum(1 for s in items if s.get("ready"))
+        list_online = [s for s in items if s.get("ready")]
         return {
             "total": len(items),
             "online": online,
@@ -411,6 +427,7 @@ class MediaMTXClient:
             "total_readers": sum(safe_int(s.get("readers")) for s in items),
             "total_bytes_received": sum(s.get("bytesReceived", 0) for s in items),
             "total_bytes_sent": sum(s.get("bytesSent", 0) for s in items),
+            "online_lists": list_online
         }
 
     async def get_stream_detail(self, name):

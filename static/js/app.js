@@ -51,7 +51,6 @@ async function fetchAPI(endpoint, options = {}) {
         headers: { 'Content-Type': 'application/json' },
         ...options,
     });
-    console.log(res);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ message: 'Request failed' }));
         const error = new Error(err.message || `HTTP ${res.status}`);
@@ -476,10 +475,17 @@ async function navigateToPage(page, pathName = null) {
 }
 
 function bindPageEvents(page) {
-    if (page === 'streams') {
-        document.getElementById('active-paths')?.addEventListener('change', () => {
-            renderStreams(allPaths);
+    if (page === 'dashboard') {
+        document.getElementById('paths-table-body')?.addEventListener('click', event => {
+            const button = event.target.closest?.('button[data-path-action]');
+            if (!button) return;
+            const name = button.dataset.pathName;
+            if (button.dataset.pathAction === 'detail') {
+                window.location.hash = `#path-detail/${encodeURIComponent(name)}`;
+            }
         });
+    }
+    if (page === 'streams') {
         document.getElementById('streams-table-body')?.addEventListener('click', event => {
             const button = event.target.closest?.('button[data-path-action]');
             if (!button) return;
@@ -612,6 +618,7 @@ async function loadDashboard() {
         const summary = await fetchAPI('/streams/summary');
         if (summary.success) {
             renderSummary(summary.data);
+            renderPaths(summary.data.online_lists);
             anySuccess = true;
         } else {
             renderSummaryError();
@@ -673,6 +680,7 @@ function renderSummary(data) {
     document.getElementById('stat-online').textContent = formatNumber(data.online);
     document.getElementById('stat-offline').textContent = formatNumber(data.offline);
     document.getElementById('stat-viewers').textContent = formatNumber(data.total_readers);
+    document.getElementById('online-count').textContent = formatNumber(data.online) + " Online"
 
     // Update server traffic in the status card
     document.getElementById('server-traffic').textContent =
@@ -722,6 +730,30 @@ function renderServerStatus(health) {
     document.getElementById('server-version').textContent = health.version || 'unknown';
     // Use 'started' field from MediaMTX /info endpoint to calculate uptime
     document.getElementById('server-uptime').textContent = formatUptimeFromStart(health.started);
+}
+
+function renderPaths(paths) {
+    const tbody = document.getElementById('paths-table-body');
+
+    if (paths.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-12 text-center text-gray-500">No paths found</td></tr>';
+        return;
+    }
+    tbody.innerHTML = paths.map(p => {
+        const tracks = Array.isArray(p.tracks) ? p.tracks : [];
+        const trackInfo = tracks.length > 0 ? tracks.join(', ') : '-';
+        return `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 font-mono text-sm">${escapeHtml(p.name)}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(trackInfo)}</td>
+            <td class="px-6 py-4 text-sm text-gray-600">${escapeHtml(p.source.type)}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(p.bytesReceived)}</td>
+            <td class="px-6 py-4 text-sm font-mono">${formatBytes(p.bytesSent)}</td>
+            <td class="px-6 py-4 text-sm">
+                <button class="btn-icon btn-primary" data-path-action="detail" data-path-name="${escapeHtml(p.name)}">Detail</button>
+            </td>
+        </tr>
+    `}).join('');
 }
 
 function renderStreams(streams) {
