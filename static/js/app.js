@@ -51,6 +51,7 @@ async function fetchAPI(endpoint, options = {}) {
         headers: { 'Content-Type': 'application/json' },
         ...options,
     });
+    console.log(res);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ message: 'Request failed' }));
         const error = new Error(err.message || `HTTP ${res.status}`);
@@ -1754,6 +1755,11 @@ async function saveConfigGlobalForm() {
             document.getElementById('config-global-editor').value = JSON.stringify(res.data, null, 2);
             statusEl.textContent = 'Configuration saved successfully';
             statusEl.className = 'mt-4 text-sm text-green-600';
+
+            setTimeout(function() {
+                console.log('5. Mengeksekusi reload...');
+                window.location.reload();
+            }, 1500);
         } else {
             throw new Error('Failed to save');
         }
@@ -1782,16 +1788,27 @@ async function saveConfigGlobalJSON() {
             body: JSON.stringify(config),
         });
 
+        console.log(res);
+        console.log("jajajaaj");
         if (res.success) {
             originalConfig = res.data;
             populateConfigGlobalForm(res.data);
             editor.value = JSON.stringify(res.data, null, 2);
             statusEl.textContent = 'Configuration saved successfully';
             statusEl.className = 'mt-3 text-sm text-green-600';
+
+            console.log('Timer dimulai, reload dalam 1.5 detik...');
+
+            setTimeout(function() {
+                console.log('Mengeksekusi location.reload()...');
+                window.location.reload(true); // Parameter true memaksa reload dari server (bypass cache)
+            }, 1500);
+
         } else {
             throw new Error('Failed to save');
         }
     } catch (e) {
+        console.log(`Error: ${e.message}`);
         statusEl.textContent = `Error: ${e.message}`;
         statusEl.className = 'mt-3 text-sm text-red-600';
     } finally {
