@@ -140,12 +140,43 @@ class MediaMTXClient:
         return r.json()
 
     async def patch_server_config(self, payload):
-        r = await self.client.patch(
-            f"{self.base_url}/config/global/patch", json=payload
-        )
-        r.raise_for_status()
-        await self._queue_save_to_yaml(payload)
-        return r.json()
+        try:
+            cleaned_payload = {}
+            for key, value in payload.items():
+                if isinstance(value, dict):
+                    if "enabled" in value:
+                        cleaned_payload[key] = bool(value["enabled"])
+                    continue
+
+                if value == "true" or value is True:
+                    cleaned_payload[key] = True
+                elif value == "false" or value is False:
+                    cleaned_payload[key] = False
+                else:
+                    cleaned_payload[key] = value
+
+            cleaned_payload.pop("status", None)
+
+            r = await self.client.patch(
+                f"{self.base_url}/config/global/patch", json=cleaned_payload
+            )
+            if r.is_error:
+                error_detail = r.text
+                print(f"MediaMTX rejected config: {error_detail}")
+                raise HTTPException(
+                    status_code=r.status_code,
+                    detail=f"MediaMTX Error: {error_detail}"
+                )
+
+            r.raise_for_status()
+            await self._queue_save_to_yaml(payload)
+            return r.json()
+        except httpx.HTTPStatusError as exc:
+            print(f"HTTP Error from MediaMTX: {exc.response.text}")
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=exc.response.text
+            )
 
     # --- Paths ---
     async def list_paths(self):
@@ -183,7 +214,10 @@ class MediaMTXClient:
         return r.json()
 
     async def get_path(self, name):
-        r = await self.client.get(f"{self.base_url}/config/paths/get/{quote(name, safe='')}")
+        encoded_name = quote(name, safe="")
+        url = f"{self.base_url}/config/paths/get/{encoded_name}"
+
+        r = await self.client.get(url)
         if r.status_code == 404:
             raise HTTPException(404, "Path not found")
         r.raise_for_status()
@@ -229,21 +263,100 @@ class MediaMTXClient:
 
     # --- Streams ---
     async def list_streams(self):
-        r = await self.client.get(f"{self.base_url}/paths/list")
-        r.raise_for_status()
-        data = r.json()
-        items = data.get("items", []) or []
+        rtsp_con = await self.list_rtsp_connections()
+        rtmp_con = await self.list_rtmp_connections()
+        hls_con = await self.list_hls_connections()
+        rtsp_ses = await self.list_rtsp_sessions()
+        rtmp_ses = await self.list_rtmp_sessions()
+        hls_ses = await self.list_hls_sessions()
+
+        rtsp_items = rtsp_con.get("items", []) or []
+        rtmp_items = rtmp_con.get("items", []) or []
+        hls_items = hls_con.get("items", []) or []
+
+        rtsp_items_ses = rtsp_ses.get("items", []) or []
+        rtmp_items_ses = rtmp_ses.get("items", []) or []
+        hls_items_ses = hls_ses.get("items", []) or []
 
         normalized = []
-        for s in items:
+
+        for s in rtsp_items:
+            if s.get("state", "") == "":
+                continue
             normalized.append({
-                "name": s.get("name", "unknown"),
-                "ready": s.get("ready", False),
-                "tracks": s.get("tracks", []) or [],
-                "readers": len(s.get("readers", [])) if isinstance(s.get("readers"), list) else 0,
+                "type": "rtsp",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
                 "bytes_received": s.get("bytesReceived", 0),
                 "bytes_sent": s.get("bytesSent", 0)
             })
+
+        # Normalisasi koneksi RTMP
+        for s in rtmp_items:
+            if s.get("state", "") == "":
+                continue
+            normalized.append({
+                "type": "rtmp",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
+                "bytes_received": s.get("bytesReceived", 0),
+                "bytes_sent": s.get("bytesSent", 0)
+            })
+
+        # Normalisasi koneksi HLS
+        for s in hls_items:
+            if s.get("state", "") == "":
+                continue
+            normalized.append({
+                "type": "hls",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
+                "bytes_received": s.get("bytesReceived", 0),
+                "bytes_sent": s.get("bytesSent", 0)
+            })
+
+        # Normalisasi sesi rtsp
+        for s in rtsp_items_ses:
+            normalized.append({
+                "type": "rtsp",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
+                "bytes_received": s.get("bytesReceived", 0),
+                "bytes_sent": s.get("bytesSent", 0)
+            })
+
+        # Normalisasi sesi RTMP
+        for s in rtmp_items_ses:
+            normalized.append({
+                "type": "rtmp",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
+                "bytes_received": s.get("bytesReceived", 0),
+                "bytes_sent": s.get("bytesSent", 0)
+            })
+
+        # Normalisasi sesi HLS
+        for s in hls_items_ses:
+            normalized.append({
+                "type": "hls",
+                "id": s.get("id", "unknown"),
+                "name": s.get("path", "unknown"),
+                "remote_addr": s.get("remoteAddr", ""),
+                "state": s.get("state", ""),
+                "bytes_received": s.get("bytesReceived", 0),
+                "bytes_sent": s.get("bytesSent", 0)
+            })
+
         return {"items": normalized}
 
     async def get_streams_summary(self):
@@ -271,7 +384,6 @@ class MediaMTXClient:
         encoded_name = quote(name, safe="")
         url = f"{self.base_url}/paths/get/{encoded_name}"
 
-        print(f"nama {url}",flush=True)
         r = await self.client.get(url)
         r.raise_for_status()
         data = r.json()
